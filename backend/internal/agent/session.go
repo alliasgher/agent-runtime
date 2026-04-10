@@ -13,6 +13,7 @@ import (
 
 type Session struct {
 	ID        string        `json:"id"`
+	Title     string        `json:"title"`
 	Messages  []llm.Message `json:"messages"`
 	CreatedAt time.Time     `json:"created_at"`
 	UpdatedAt time.Time     `json:"updated_at"`
@@ -33,6 +34,14 @@ func newSession(persist func(llm.Message)) *Session {
 func (s *Session) AddMessage(msg llm.Message) {
 	s.Messages = append(s.Messages, msg)
 	s.UpdatedAt = time.Now()
+	// Set title from first user message
+	if s.Title == "" && msg.Role == llm.RoleUser && msg.Content != "" {
+		title := msg.Content
+		if len(title) > 60 {
+			title = title[:57] + "..."
+		}
+		s.Title = title
+	}
 	if s.persist != nil {
 		s.persist(msg)
 	}
@@ -72,6 +81,16 @@ func (ss *SessionStore) loadFromDB() {
 			Messages:  msgs,
 			CreatedAt: row.CreatedAt,
 			UpdatedAt: row.UpdatedAt,
+		}
+		for _, m := range msgs {
+			if m.Role == llm.RoleUser && m.Content != "" {
+				title := m.Content
+				if len(title) > 60 {
+					title = title[:57] + "..."
+				}
+				s.Title = title
+				break
+			}
 		}
 		s.persist = ss.makePersist(s.ID)
 		ss.sessions[s.ID] = s

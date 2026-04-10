@@ -1,8 +1,9 @@
 FROM golang:1.25-bookworm AS builder
 WORKDIR /app
-COPY go.mod go.sum ./
+# Copy backend module files (path relative to repo root when deployed from root)
+COPY backend/go.mod backend/go.sum ./
 RUN go mod download
-COPY . .
+COPY backend/ .
 RUN CGO_ENABLED=0 go build -o bin/server ./cmd/server/
 
 FROM debian:bookworm-slim

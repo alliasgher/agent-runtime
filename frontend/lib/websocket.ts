@@ -105,6 +105,15 @@ export async function fetchSession(sessionId: string): Promise<{ id: string; mes
   return res.json();
 }
 
+export async function fetchSessions(): Promise<{ id: string; title: string; message_count: number; updated_at: string }[]> {
+  const res = await fetch(`${API_BASE}/api/sessions`);
+  return res.json();
+}
+
+export async function deleteSession(sessionId: string): Promise<void> {
+  await fetch(`${API_BASE}/api/sessions/${sessionId}`, { method: "DELETE" });
+}
+
 export async function fetchTools() {
   const res = await fetch(`${API_BASE}/api/tools`);
   return res.json();

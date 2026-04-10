@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"sync"
 	"time"
 
@@ -70,17 +71,27 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	sessions := s.sessions.List()
 	type sessionInfo struct {
 		ID        string `json:"id"`
+		Title     string `json:"title"`
 		Messages  int    `json:"message_count"`
-		CreatedAt string `json:"created_at"`
+		UpdatedAt string `json:"updated_at"`
 	}
 	out := make([]sessionInfo, len(sessions))
 	for i, sess := range sessions {
+		title := sess.Title
+		if title == "" {
+			title = "New chat"
+		}
 		out[i] = sessionInfo{
 			ID:        sess.ID,
+			Title:     title,
 			Messages:  len(sess.Messages),
-			CreatedAt: sess.CreatedAt.Format(time.RFC3339),
+			UpdatedAt: sess.UpdatedAt.Format(time.RFC3339),
 		}
 	}
+	// Sort most recent first
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].UpdatedAt > out[j].UpdatedAt
+	})
 	writeJSON(w, http.StatusOK, out)
 }
 

@@ -5,6 +5,7 @@ import ReactMarkdown from "react-markdown";
 import { AgentEvent, Message } from "@/lib/types";
 import { getOrCreateSession, createSession, connectWebSocket, fetchSession } from "@/lib/websocket";
 import ToolCard from "./ToolCard";
+import Sidebar from "./Sidebar";
 
 function formatTime(ts: number) {
   return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -18,6 +19,7 @@ export default function Chat() {
   const [currentEvents, setCurrentEvents] = useState<AgentEvent[]>([]);
   const [thinkingStep, setThinkingStep] = useState(0);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sidebarRefresh, setSidebarRefresh] = useState(0);
 
   const wsRef = useRef<{ send: (s: string) => void; cancel: () => void; close: () => void } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -111,6 +113,7 @@ export default function Chat() {
         setCurrentEvents([]);
         setThinkingStep(0);
         setIsProcessing(false);
+        setSidebarRefresh((n) => n + 1);
         break;
       case "error": {
         const isCancel = event.content?.toLowerCase().includes("cancel");
@@ -174,6 +177,31 @@ export default function Chat() {
     connectToSession(sid, mounted);
   }
 
+  async function handleSelectSession(sid: string) {
+    if (sid === sessionId) return;
+    wsRef.current?.close();
+    setMessages([]);
+    setCurrentEvents([]);
+    setThinkingStep(0);
+    setIsProcessing(false);
+    setIsConnected(false);
+    setSessionId(sid);
+
+    localStorage.setItem("agent_session_id", sid);
+    const existing = await fetchSession(sid);
+    if (existing && existing.messages) {
+      setMessages(existing.messages.map((m, i) => ({
+        id: `history-${i}`,
+        role: m.role as "user" | "assistant",
+        content: m.content,
+        events: [],
+        timestamp: Date.now(),
+      })));
+    }
+    const mounted = { current: true };
+    connectToSession(sid, mounted);
+  }
+
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -184,7 +212,14 @@ export default function Chat() {
   const toolPairs = groupToolEvents(currentEvents);
 
   return (
-    <div className="flex flex-col h-screen max-w-4xl mx-auto">
+    <div className="flex h-screen bg-slate-950">
+      <Sidebar
+        currentSessionId={sessionId}
+        onSelectSession={handleSelectSession}
+        onNewChat={handleNewChat}
+        refreshTrigger={sidebarRefresh}
+      />
+    <div className="flex flex-col flex-1 min-w-0">
       {/* Header */}
       <header className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-slate-800">
         <div className="flex items-center gap-3">
@@ -199,17 +234,6 @@ export default function Chat() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          {messages.length > 0 && !isProcessing && (
-            <button
-              onClick={handleNewChat}
-              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors"
-            >
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-              </svg>
-              New chat
-            </button>
-          )}
           <div className="flex items-center gap-2">
             <div className={`w-2 h-2 rounded-full transition-colors ${isConnected ? "bg-emerald-400" : "bg-red-400 animate-pulse"}`} />
             <span className="text-xs text-slate-400 hidden sm:block">
@@ -385,6 +409,7 @@ export default function Chat() {
           Powered by a custom agent runtime with real-time tool orchestration
         </p>
       </div>
+    </div>
     </div>
   );
 }

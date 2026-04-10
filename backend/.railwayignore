@@ -1,0 +1,4 @@
+# Override .gitignore — include everything needed for build
+!cmd/
+!cmd/server/
+!cmd/server/main.go
