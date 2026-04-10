@@ -277,12 +277,16 @@ func (p *OpenAIProvider) convertMessages(messages []Message) []map[string]any {
 	for _, msg := range messages {
 		m := map[string]any{"role": string(msg.Role)}
 
-		if msg.Content != "" {
+		switch {
+		case msg.Content != "":
 			m["content"] = msg.Content
-		} else if msg.Role == RoleAssistant {
-			// OpenAI spec: assistant messages must include content even when
-			// empty — use explicit null so the API doesn't reject the request.
+		case msg.Role == RoleAssistant:
+			// OpenAI spec: assistant messages with tool_calls use explicit null.
 			m["content"] = nil
+		case msg.Role == RoleTool:
+			// Tool messages must always have a content field (empty string is fine,
+			// but missing causes a 400 from Groq/OpenAI).
+			m["content"] = ""
 		}
 
 		if len(msg.ToolCalls) > 0 {

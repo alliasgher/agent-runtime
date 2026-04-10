@@ -2,7 +2,9 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -151,6 +153,24 @@ func TestConvertMessages_NullContentForAssistantWithToolCalls(t *testing.T) {
 	}
 }
 
+func TestConvertMessages_ToolMessageAlwaysHasContent(t *testing.T) {
+	p := NewOpenAIProvider("", "", "")
+	msgs := []Message{
+		{Role: RoleTool, Content: "", ToolCallID: "c1", Name: "web_search"},
+	}
+	out := p.convertMessages(msgs)
+	if len(out) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(out))
+	}
+	contentVal, exists := out[0]["content"]
+	if !exists {
+		t.Error("tool message must always have content key")
+	}
+	if contentVal == nil {
+		t.Error("tool message content must not be nil")
+	}
+}
+
 func TestConvertMessages_ContentPresent(t *testing.T) {
 	p := NewOpenAIProvider("", "", "")
 	msgs := []Message{
@@ -195,6 +215,64 @@ func TestChatCompletion_HTTPError(t *testing.T) {
 	if !strings.Contains(err.Error(), "500") {
 		t.Errorf("error should mention HTTP 500, got: %v", err)
 	}
+}
+
+// TestChatCompletion_ToolRoleContentOnWire ensures that a RoleTool message with
+// empty content is serialised with a "content" key (not omitted) so that
+// OpenAI-compatible APIs don't reject it with HTTP 400.
+func TestChatCompletion_ToolRoleContentOnWire(t *testing.T) {
+	var capturedBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"ok","tool_calls":null}}]}`)
+	}))
+	defer srv.Close()
+
+	p := NewOpenAIProvider(srv.URL, "", "test-model")
+	_, err := p.ChatCompletion(context.Background(), []Message{
+		{Role: RoleUser, Content: "use a tool"},
+		{
+			Role:      RoleAssistant,
+			ToolCalls: []ToolCall{{ID: "c1", Name: "echo", Arguments: `{}`}},
+		},
+		{Role: RoleTool, Content: "", ToolCallID: "c1", Name: "echo"},
+	}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var reqBody struct {
+		Messages []map[string]json.RawMessage `json:"messages"`
+	}
+	if err := json.Unmarshal(capturedBody, &reqBody); err != nil {
+		t.Fatalf("could not parse request body: %v", err)
+	}
+
+	// Find the tool message and verify "content" key is present.
+	for _, msg := range reqBody.Messages {
+		roleRaw, ok := msg["role"]
+		if !ok {
+			continue
+		}
+		var role string
+		json.Unmarshal(roleRaw, &role)
+		if role != "tool" {
+			continue
+		}
+		contentRaw, exists := msg["content"]
+		if !exists {
+			t.Fatal("role:tool message is missing 'content' key — API will return HTTP 400")
+		}
+		// content must be "" (empty string), not null
+		var content string
+		if err := json.Unmarshal(contentRaw, &content); err != nil {
+			t.Fatalf("content should be a string, got %s: %v", contentRaw, err)
+		}
+		return
+	}
+	t.Fatal("no tool message found in captured request body")
 }
 
 func TestBuildFirstParamLookup(t *testing.T) {
