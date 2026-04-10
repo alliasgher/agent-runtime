@@ -47,15 +47,25 @@ function CopyButton({ text, className = "" }: { text: string; className?: string
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const markdownComponents: any = {
-  code({ inline, className, children, ...props }: {
-    inline?: boolean;
+  code({ className, children, ...props }: {
     className?: string;
     children?: React.ReactNode;
   }) {
     const match = /language-(\w+)/.exec(className || "");
     const codeText = String(children).replace(/\n$/, "");
+    // react-markdown v9 doesn't reliably pass `inline`. Detect it by:
+    // no language class + no newlines in content = inline code span.
+    const isInline = !match && !codeText.includes("\n");
 
-    if (!inline && match) {
+    if (isInline) {
+      return (
+        <code className="text-xs bg-slate-900/60 rounded px-1 py-0.5 font-mono" {...props}>
+          {children}
+        </code>
+      );
+    }
+
+    if (match) {
       return (
         <div className="relative group my-2">
           <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -79,24 +89,16 @@ const markdownComponents: any = {
       );
     }
 
-    // Inline code
-    if (!inline && !match) {
-      return (
-        <div className="relative group my-2">
-          <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
-            <CopyButton text={codeText} />
-          </div>
-          <pre className="text-xs bg-slate-900/80 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap">
-            <code {...props}>{children}</code>
-          </pre>
-        </div>
-      );
-    }
-
+    // Fenced block without a language tag
     return (
-      <code className="text-xs bg-slate-900/60 rounded px-1 py-0.5 font-mono" {...props}>
-        {children}
-      </code>
+      <div className="relative group my-2">
+        <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
+          <CopyButton text={codeText} />
+        </div>
+        <pre className="text-xs bg-slate-900/80 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap">
+          <code {...props}>{children}</code>
+        </pre>
+      </div>
     );
   },
 };
