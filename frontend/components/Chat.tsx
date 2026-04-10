@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import { AgentEvent, Message } from "@/lib/types";
-import { createSession, connectWebSocket } from "@/lib/websocket";
+import { getOrCreateSession, connectWebSocket, fetchSession } from "@/lib/websocket";
 import ToolCard from "./ToolCard";
 
 export default function Chat() {
@@ -14,7 +14,7 @@ export default function Chat() {
   const [currentEvents, setCurrentEvents] = useState<AgentEvent[]>([]);
   const [thinkingText, setThinkingText] = useState<string | null>(null);
 
-  const wsRef = useRef<{ send: (s: string) => void; close: () => void } | null>(null);
+  const wsRef = useRef<{ send: (s: string) => void; cancel: () => void; close: () => void } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -32,7 +32,19 @@ export default function Chat() {
 
     async function connect() {
       try {
-        const sessionId = await createSession();
+        const sessionId = await getOrCreateSession();
+
+        // Hydrate history from server
+        const existing = await fetchSession(sessionId);
+        if (existing && existing.messages && existing.messages.length > 0 && mounted) {
+          setMessages(existing.messages.map((m, i) => ({
+            id: `history-${i}`,
+            role: m.role as "user" | "assistant",
+            content: m.content,
+            events: [],
+            timestamp: Date.now(),
+          })));
+        }
 
         const ws = connectWebSocket(
           sessionId,
@@ -42,6 +54,9 @@ export default function Chat() {
           },
           () => {
             if (mounted) setIsConnected(false);
+          },
+          () => {
+            if (mounted) setIsConnected(true);
           }
         );
 
@@ -313,15 +328,31 @@ export default function Chat() {
             rows={1}
             className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 resize-none disabled:opacity-50 transition-all"
           />
-          <button
-            onClick={handleSend}
-            disabled={!input.trim() || !isConnected || isProcessing}
-            className="bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-xl px-4 py-3 transition-colors flex-shrink-0"
-          >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19V5m0 0l-7 7m7-7l7 7" />
-            </svg>
-          </button>
+          {isProcessing ? (
+            <button
+              onClick={() => {
+                wsRef.current?.cancel();
+                setIsProcessing(false);
+                setCurrentEvents([]);
+                setThinkingText(null);
+              }}
+              className="bg-red-600 hover:bg-red-500 text-white rounded-xl px-4 py-3 transition-colors flex-shrink-0"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          ) : (
+            <button
+              onClick={handleSend}
+              disabled={!input.trim() || !isConnected}
+              className="bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-xl px-4 py-3 transition-colors flex-shrink-0"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19V5m0 0l-7 7m7-7l7 7" />
+              </svg>
+            </button>
+          )}
         </div>
         <p className="text-xs text-slate-600 mt-2 text-center">
           Powered by a custom agent runtime with real-time tool orchestration

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
+	"strings"
 )
 
 type OpenAIProvider struct {
@@ -68,6 +70,13 @@ func (p *OpenAIProvider) ChatCompletion(ctx context.Context, messages []Message,
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		// Groq returns 400 with a failed_generation field when the model emits
+		// malformed tool call syntax. Try to salvage the tool calls from it.
+		if resp.StatusCode == http.StatusBadRequest {
+			if recovered := recoverFromFailedGeneration(respBody); recovered != nil {
+				return recovered, nil
+			}
+		}
 		return nil, fmt.Errorf("API error (HTTP %d): %s", resp.StatusCode, string(respBody))
 	}
 
@@ -162,5 +171,68 @@ func (p *OpenAIProvider) parseResponse(body []byte) (*Response, error) {
 		})
 	}
 
+	// Fallback: some models emit tool calls as text instead of structured tool_calls.
+	// Detect and promote them so the agent loop can execute them.
+	if len(resp.ToolCalls) == 0 && resp.Content != "" {
+		if calls := extractTextToolCalls(resp.Content); len(calls) > 0 {
+			resp.ToolCalls = calls
+			resp.Content = ""
+		}
+	}
+
 	return resp, nil
+}
+
+// recoverFromFailedGeneration handles Groq 400 errors where the model emits
+// malformed tool call syntax. It parses the failed_generation field and
+// extracts tool calls from it.
+func recoverFromFailedGeneration(body []byte) *Response {
+	var errResp struct {
+		Error struct {
+			FailedGeneration string `json:"failed_generation"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &errResp); err != nil {
+		return nil
+	}
+	fg := errResp.Error.FailedGeneration
+	if fg == "" {
+		return nil
+	}
+	calls := extractTextToolCalls(fg)
+	if len(calls) == 0 {
+		return nil
+	}
+	return &Response{ToolCalls: calls}
+}
+
+// extractTextToolCalls detects tool calls written as plain text by the model.
+// Handles patterns like:
+//   function=run_python>{"code": "..."};</function>
+//   <function=wikipedia{"query": "..."}></function>
+var textToolCallRe = regexp.MustCompile(`(?s)<?function=(\w+)[>]?(.*?)</function>`)
+
+func extractTextToolCalls(content string) []ToolCall {
+	matches := textToolCallRe.FindAllStringSubmatch(content, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	calls := make([]ToolCall, 0, len(matches))
+	for i, m := range matches {
+		name := m[1]
+		raw := strings.TrimSpace(m[2])
+		// Normalize single-quoted Python dicts to valid JSON
+		raw = strings.ReplaceAll(raw, "'", "\"")
+		// Verify it's valid JSON; if not, wrap as {"code": ...}
+		if !json.Valid([]byte(raw)) {
+			b, _ := json.Marshal(map[string]string{"code": raw})
+			raw = string(b)
+		}
+		calls = append(calls, ToolCall{
+			ID:        fmt.Sprintf("text-call-%d", i),
+			Name:      name,
+			Arguments: raw,
+		})
+	}
+	return calls
 }

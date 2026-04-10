@@ -1,38 +1,53 @@
 package main
 
 import (
-	"log"
+	"log/slog"
 	"os"
 
 	"github.com/ali-asghar/agent-runtime/internal/llm"
 	"github.com/ali-asghar/agent-runtime/internal/server"
+	"github.com/ali-asghar/agent-runtime/internal/store"
 	"github.com/ali-asghar/agent-runtime/internal/tools"
 )
 
 func main() {
-	// Configuration from environment
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+
 	port := envOr("PORT", "8080")
-	baseURL := envOr("LLM_BASE_URL", "https://api.groq.com/openai/v1") // Groq free tier
+	baseURL := envOr("LLM_BASE_URL", "https://api.groq.com/openai/v1")
 	apiKey := envOr("LLM_API_KEY", "")
-	model := envOr("LLM_MODEL", "llama-3.1-8b-instant") // Free on Groq
+	model := envOr("LLM_MODEL", "llama-3.3-70b-versatile") // Free on Groq, better tool use
+	databaseURL := envOr("DATABASE_URL", "")
 
 	if apiKey == "" {
-		log.Fatal("LLM_API_KEY is required. Get a free key at https://console.groq.com")
+		slog.Error("LLM_API_KEY is required. Get a free key at https://console.groq.com")
+		os.Exit(1)
 	}
 
-	// Create LLM provider
+	var db *store.Store
+	if databaseURL != "" {
+		var err error
+		db, err = store.New(databaseURL)
+		if err != nil {
+			slog.Error("failed to connect to database", "error", err)
+			os.Exit(1)
+		}
+		slog.Info("connected to database")
+	} else {
+		slog.Info("DATABASE_URL not set — using in-memory session store")
+	}
+
 	provider := llm.NewOpenAIProvider(baseURL, apiKey, model)
 
-	// Create tool registry with built-in tools
 	registry := tools.NewRegistry()
 	registry.Register(tools.NewWebSearchTool())
 	registry.Register(tools.NewReadURLTool())
 	registry.Register(tools.NewRunPythonTool())
 	registry.Register(tools.NewWikipediaTool())
 
-	// Start server
-	if err := server.Start(":"+port, provider, registry); err != nil {
-		log.Fatalf("Server failed: %v", err)
+	if err := server.Start(":"+port, provider, registry, db); err != nil {
+		slog.Error("server failed", "error", err)
+		os.Exit(1)
 	}
 }
 

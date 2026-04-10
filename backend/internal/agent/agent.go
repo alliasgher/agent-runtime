@@ -3,7 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -13,7 +13,7 @@ import (
 
 const (
 	MaxSteps      = 15
-	SystemPrompt  = `You are a helpful AI assistant with access to tools. When you need current information, calculations, or code execution, use the appropriate tool. Think step by step about which tools to use. Always explain your reasoning briefly before using a tool. After getting tool results, synthesize the information into a clear, helpful response.`
+	SystemPrompt  = `You are a helpful AI assistant with access to tools. When you need current information, calculations, or code execution, you MUST call the tool directly using the function calling mechanism — never write tool calls as text in your response. Do not narrate or describe what you are about to do; just call the tool. After getting tool results, synthesize the information into a clear, helpful response.`
 )
 
 // Event types streamed to the client
@@ -166,7 +166,7 @@ func (a *Agent) Run(ctx context.Context, session *Session, input string, events 
 			output := res.output
 			if res.err != nil {
 				output = fmt.Sprintf("Error: %v", res.err)
-				log.Printf("Tool %s error: %v", res.name, res.err)
+				slog.Error("tool execution failed", "tool", res.name, "error", res.err)
 			}
 
 			// Truncate very long results
