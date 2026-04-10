@@ -131,7 +131,16 @@ export default function Chat() {
       sid,
       (event) => { if (mounted.current) handleEvent(event); },
       () => { if (mounted.current) setIsConnected(false); },
-      () => { if (mounted.current) setIsConnected(true); }
+      () => {
+        if (!mounted.current) return;
+        setIsConnected(true);
+        // The agent goroutine was killed when the connection dropped — clear any
+        // stuck processing state so the user isn't left staring at "Thinking..."
+        setIsProcessing(false);
+        setCurrentEvents([]);
+        setStreamingContent("");
+        setThinkingStep(0);
+      }
     );
     wsRef.current = ws;
     if (mounted.current) setIsConnected(true);
