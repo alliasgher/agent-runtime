@@ -269,21 +269,17 @@ func TestSmoke(t *testing.T) {
 	passed := 0
 	failed := 0
 
-	// Reuse one session per category to minimise session-creation rate limit hits.
-	categorySession := make(map[string]string)
-
 	for i, tc := range cases {
 		tc := tc
 		i := i
 		t.Run(fmt.Sprintf("%s/%d", tc.category, i), func(t *testing.T) {
-			sid, ok := categorySession[tc.category]
-			if !ok {
-				sid = createSession(t)
-				categorySession[tc.category] = sid
-			}
+			// Fresh session per question — avoids context contamination and
+			// keeps message history short so the model stays focused.
+			sid := createSession(t)
 
-			// Pause between questions to stay under Groq's token-per-minute limit
-			time.Sleep(8 * time.Second)
+			// Pause between questions to stay under Groq's token-per-minute limit.
+			// 29 questions × ~10s = ~5 min total run time.
+			time.Sleep(10 * time.Second)
 
 			content, events := ask(t, sid, tc.question, 90*time.Second)
 			checkResponse(t, tc.question, content, events)
