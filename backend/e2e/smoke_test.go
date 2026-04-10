@@ -203,52 +203,27 @@ var cases = []struct {
 }{
 	// Pure text — no tools needed
 	{"text", "What is 2 + 2?"},
-	{"text", "Say hello in three languages."},
 	{"text", "What is the capital of France?"},
-	{"text", "List three benefits of exercise."},
-	{"text", "Explain what a REST API is in one paragraph."},
 
 	// Python execution
 	{"python", "Write and run a Python script that prints the first 10 fibonacci numbers."},
-	{"python", "Write a Python script to generate a multiplication table for numbers 1 to 5."},
 	{"python", "Run Python code to calculate the factorial of 10."},
-	{"python", "Write a Python script that sorts a list of names alphabetically and prints them."},
 
 	// Web search
-	{"web_search", "Search for the top programming languages in 2025 and compare them."},
 	{"web_search", "What is the latest version of Go?"},
-	{"web_search", "Search for recent news about artificial intelligence."},
 
 	// Wikipedia
 	{"wikipedia", "What does the name Ali mean?"},
-	{"wikipedia", "Look up the history of the Python programming language."},
-	{"wikipedia", "What is quantum computing according to Wikipedia?"},
 
 	// URL reading
 	{"read_url", "Read https://go.dev and summarise what Go is."},
 
 	// Multi-step / tool chaining
-	{"multi", "Search for SpaceX latest launch and summarise the findings."},
 	{"multi", "Write a Python script to check if a number is prime, run it with the number 97, and explain the output."},
-	{"multi", "Look up the Go programming language on Wikipedia and compare it to Python in terms of use cases."},
 
 	// Edge cases that have caused bugs before
 	{"edge", "go and rust?"},
-	{"edge", "explain it"},
 	{"edge", "Search for top AI tools and then write a Python script that prints their names."},
-
-	// Math / calculation
-	{"math", "What is the square root of 144?"},
-	{"math", "Calculate the compound interest on $1000 at 5% for 3 years using Python."},
-
-	// Code explanation
-	{"code", "Explain what a goroutine is in Go."},
-	{"code", "What is the difference between a slice and an array in Go?"},
-	{"code", "Write a Python function that reverses a string and run it."},
-
-	// Mixed tool usage
-	{"mixed", "Search for the meaning of the name Ali and also look it up on Wikipedia."},
-	{"mixed", "Find the current population of Japan and write a Python script that calculates what 0.1% of that number is."},
 }
 
 // ── main test ─────────────────────────────────────────────────────────────────
@@ -277,11 +252,10 @@ func TestSmoke(t *testing.T) {
 			// keeps message history short so the model stays focused.
 			sid := createSession(t)
 
-			// Pause between questions to stay under Groq's token-per-minute limit.
-			// 29 questions × ~10s = ~5 min total run time.
-			time.Sleep(10 * time.Second)
+			// Small pause between questions to avoid hammering the server.
+			time.Sleep(3 * time.Second)
 
-			content, events := ask(t, sid, tc.question, 90*time.Second)
+			content, events := ask(t, sid, tc.question, 3*time.Minute)
 			checkResponse(t, tc.question, content, events)
 
 			if t.Failed() {

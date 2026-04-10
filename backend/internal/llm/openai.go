@@ -76,6 +76,9 @@ func (p *OpenAIProvider) ChatCompletion(ctx context.Context, messages []Message,
 		resp.Body.Close()
 		if resp.StatusCode == http.StatusTooManyRequests {
 			wait := retryAfterDuration(resp)
+			if wait > 30*time.Second {
+				return nil, fmt.Errorf("rate limited — retry in %.0fs", wait.Seconds())
+			}
 			slog.Warn("rate limited, waiting", "seconds", wait.Seconds(), "attempt", attempt+1)
 			time.Sleep(wait)
 			// Recreate the request body for the next attempt
@@ -139,6 +142,9 @@ func (p *OpenAIProvider) StreamChatCompletion(ctx context.Context, messages []Me
 		if resp.StatusCode == http.StatusTooManyRequests {
 			wait := retryAfterDuration(resp)
 			resp.Body.Close()
+			if wait > 30*time.Second {
+				return nil, fmt.Errorf("rate limited — retry in %.0fs", wait.Seconds())
+			}
 			slog.Warn("stream rate limited, waiting", "seconds", wait.Seconds(), "attempt", attempt+1)
 			time.Sleep(wait)
 			req, _ = http.NewRequestWithContext(ctx, "POST", p.baseURL+"/chat/completions", bytes.NewReader(bodyJSON))
