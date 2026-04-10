@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 )
 
 type OpenAIProvider struct {
@@ -23,7 +24,7 @@ func NewOpenAIProvider(baseURL, apiKey, model string) *OpenAIProvider {
 		baseURL: baseURL,
 		apiKey:  apiKey,
 		model:   model,
-		client:  &http.Client{},
+		client:  &http.Client{Timeout: 60 * time.Second},
 	}
 }
 
@@ -210,7 +211,8 @@ func recoverFromFailedGeneration(body []byte) *Response {
 // Handles patterns like:
 //   function=run_python>{"code": "..."};</function>
 //   <function=wikipedia{"query": "..."}></function>
-var textToolCallRe = regexp.MustCompile(`(?s)<?function=(\w+)[>]?(.*?)</function>`)
+//   <function/web_search{"query": "..."}></function>
+var textToolCallRe = regexp.MustCompile(`(?s)<?function[=/](\w+)[>]?(.*?)</function>`)
 
 func extractTextToolCalls(content string) []ToolCall {
 	matches := textToolCallRe.FindAllStringSubmatch(content, -1)
