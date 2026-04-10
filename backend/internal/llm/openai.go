@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -66,9 +67,6 @@ func (p *OpenAIProvider) ChatCompletion(ctx context.Context, messages []Message,
 
 	var respBody []byte
 	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 {
-			time.Sleep(time.Duration(attempt*attempt) * 5 * time.Second) // 5s, 20s backoff
-		}
 		var doErr error
 		resp, doErr := p.client.Do(req)
 		if doErr != nil {
@@ -77,7 +75,9 @@ func (p *OpenAIProvider) ChatCompletion(ctx context.Context, messages []Message,
 		respBody, _ = io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if resp.StatusCode == http.StatusTooManyRequests {
-			slog.Warn("rate limited, retrying", "attempt", attempt+1)
+			wait := retryAfterDuration(resp)
+			slog.Warn("rate limited, waiting", "seconds", wait.Seconds(), "attempt", attempt+1)
+			time.Sleep(wait)
 			// Recreate the request body for the next attempt
 			req, _ = http.NewRequestWithContext(ctx, "POST", p.baseURL+"/chat/completions", bytes.NewReader(bodyJSON))
 			req.Header.Set("Content-Type", "application/json")
@@ -131,23 +131,22 @@ func (p *OpenAIProvider) StreamChatCompletion(ctx context.Context, messages []Me
 
 	var resp *http.Response
 	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 {
-			time.Sleep(time.Duration(attempt*attempt) * 5 * time.Second)
-			req, _ = http.NewRequestWithContext(ctx, "POST", p.baseURL+"/chat/completions", bytes.NewReader(bodyJSON))
-			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("Accept", "text/event-stream")
-			if p.apiKey != "" {
-				req.Header.Set("Authorization", "Bearer "+p.apiKey)
-			}
-		}
 		var doErr error
 		resp, doErr = p.streamClient.Do(req)
 		if doErr != nil {
 			return nil, fmt.Errorf("request failed: %w", doErr)
 		}
 		if resp.StatusCode == http.StatusTooManyRequests {
+			wait := retryAfterDuration(resp)
 			resp.Body.Close()
-			slog.Warn("stream rate limited, retrying", "attempt", attempt+1)
+			slog.Warn("stream rate limited, waiting", "seconds", wait.Seconds(), "attempt", attempt+1)
+			time.Sleep(wait)
+			req, _ = http.NewRequestWithContext(ctx, "POST", p.baseURL+"/chat/completions", bytes.NewReader(bodyJSON))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Accept", "text/event-stream")
+			if p.apiKey != "" {
+				req.Header.Set("Authorization", "Bearer "+p.apiKey)
+			}
 			continue
 		}
 		break
@@ -421,6 +420,17 @@ func recoverFromFailedGeneration(body []byte, firstParam func(string) string) *R
 		return nil
 	}
 	return &Response{ToolCalls: calls}
+}
+
+// retryAfterDuration reads the Retry-After header from a 429 response and
+// returns how long to wait. Falls back to 60 seconds if the header is absent.
+func retryAfterDuration(resp *http.Response) time.Duration {
+	if ra := resp.Header.Get("Retry-After"); ra != "" {
+		if secs, err := strconv.Atoi(ra); err == nil && secs > 0 {
+			return time.Duration(secs) * time.Second
+		}
+	}
+	return 60 * time.Second
 }
 
 // textToolCallRe matches <function=name>...</function> and variants including
