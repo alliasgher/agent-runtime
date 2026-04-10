@@ -216,11 +216,15 @@ func TestWebSocket_SimpleTextResponse(t *testing.T) {
 		t.Fatalf("expected response event, got: %v", eventTypes(events))
 	}
 
-	// Find response and check content
+	// Total content = streamed tokens + response content must be non-empty
+	var totalContent strings.Builder
 	for _, e := range events {
-		if e.Type == agent.EventResponse && e.Content == "" {
-			// Content may be empty if fully streamed via tokens — that's OK
+		if e.Type == agent.EventToken || e.Type == agent.EventResponse {
+			totalContent.WriteString(e.Content)
 		}
+	}
+	if strings.TrimSpace(totalContent.String()) == "" {
+		t.Error("combined token + response content must not be empty")
 	}
 }
 
@@ -300,6 +304,17 @@ func TestWebSocket_ToolCallThenResponse(t *testing.T) {
 	}
 	if !hasType(events, agent.EventResponse) {
 		t.Errorf("expected response event, got: %v", eventTypes(events))
+	}
+
+	// Final response must have content
+	var totalContent strings.Builder
+	for _, e := range events {
+		if e.Type == agent.EventToken || e.Type == agent.EventResponse {
+			totalContent.WriteString(e.Content)
+		}
+	}
+	if strings.TrimSpace(totalContent.String()) == "" {
+		t.Error("combined token + response content must not be empty")
 	}
 
 	// Order must be: tool_call → tool_result → response

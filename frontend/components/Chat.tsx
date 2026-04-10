@@ -185,10 +185,14 @@ export default function Chat() {
         setCurrentEvents((prev) => [...prev, event]);
         break;
 
-      case "token":
-        // Accumulate streaming text tokens
-        setStreamingContent((prev) => prev + (event.content || ""));
+      case "token": {
+        // Update ref immediately so EventResponse sees the full content even if
+        // React hasn't flushed the state update yet (useEffect is async).
+        const newStreaming = streamingContentRef.current + (event.content || "");
+        streamingContentRef.current = newStreaming;
+        setStreamingContent(newStreaming);
         break;
+      }
 
       case "tool_call":
         // Model decided to use a tool — clear any streamed text (it was preamble)
