@@ -216,6 +216,17 @@ export default function Chat() {
         // flushes asynchronously.
         const content = streamingContentRef.current || event.content || "";
         streamingContentRef.current = "";
+        if (!content.trim()) {
+          // Backend sent an empty response — don't add a blank bubble.
+          // The backend should have logged a warning about this.
+          console.warn("[agent] received empty response event — skipping blank bubble", event);
+          setStreamingContent("");
+          setCurrentEvents([]);
+          setThinkingStep(0);
+          setIsProcessing(false);
+          setSidebarRefresh((n) => n + 1);
+          break;
+        }
         setMessages((prev) => [
           ...prev,
           {

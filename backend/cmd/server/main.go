@@ -11,7 +11,7 @@ import (
 )
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})))
 
 	port := envOr("PORT", "8080")
 	baseURL := envOr("LLM_BASE_URL", "https://api.groq.com/openai/v1")

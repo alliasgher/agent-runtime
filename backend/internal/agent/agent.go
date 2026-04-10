@@ -101,6 +101,19 @@ func (a *Agent) Run(ctx context.Context, session *Session, input string, events 
 			return
 		}
 
+		slog.Debug("llm response", "step", step, "content_len", len(resp.Content), "tool_calls", len(resp.ToolCalls))
+
+		// Empty response — no content, no tool calls. Retry once with non-streaming.
+		if len(resp.ToolCalls) == 0 && resp.Content == "" {
+			slog.Warn("empty streaming response, retrying with non-streaming", "step", step)
+			resp, err = a.provider.ChatCompletion(ctx, messages, toolDefs)
+			if err != nil {
+				events <- newEvent(EventError, step, fmt.Sprintf("LLM error: %v", err))
+				return
+			}
+			slog.Info("non-streaming retry", "step", step, "content_len", len(resp.Content), "tool_calls", len(resp.ToolCalls))
+		}
+
 		// Final text response — no tool calls
 		if len(resp.ToolCalls) == 0 {
 			session.AddMessage(llm.Message{Role: llm.RoleAssistant, Content: resp.Content})
