@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkBreaks from "remark-breaks";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { AgentEvent, Message } from "@/lib/types";
@@ -455,7 +456,7 @@ export default function Chat() {
                         </div>
                       ) : (
                         <div className="text-sm prose prose-invert prose-sm max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
-                          <ReactMarkdown components={markdownComponents}>{msg.content}</ReactMarkdown>
+                          <ReactMarkdown remarkPlugins={[remarkBreaks]} components={markdownComponents}>{msg.content}</ReactMarkdown>
                         </div>
                       )}
                     </div>
