@@ -55,6 +55,53 @@ func TestParseResponse_ToolCall(t *testing.T) {
 	}
 }
 
+func TestExtractTextToolCalls_PythonTagFormat(t *testing.T) {
+	// Llama's native tool call format: <|python_tag|>toolname{"key":"value"}
+	cases := []struct {
+		name    string
+		content string
+		tool    string
+		wantKey string
+		wantVal string
+	}{
+		{
+			name:    "wikipedia query",
+			content: `<|python_tag|>wikipedia{"query":"Ali name meaning"}`,
+			tool:    "wikipedia",
+			wantKey: "query",
+			wantVal: "Ali name meaning",
+		},
+		{
+			name:    "web_search query",
+			content: `<|python_tag|>web_search{"query":"top programming languages 2025"}`,
+			tool:    "web_search",
+			wantKey: "query",
+			wantVal: "top programming languages 2025",
+		},
+		{
+			name:    "run_python code",
+			content: `<|python_tag|>run_python{"code":"print(42)"}`,
+			tool:    "run_python",
+			wantKey: "code",
+			wantVal: "print(42)",
+		},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			calls := extractTextToolCalls(tt.content, func(n string) string { return "query" })
+			if len(calls) != 1 {
+				t.Fatalf("expected 1 call, got %d", len(calls))
+			}
+			if calls[0].Name != tt.tool {
+				t.Errorf("want tool %q, got %q", tt.tool, calls[0].Name)
+			}
+			if !strings.Contains(calls[0].Arguments, tt.wantVal) {
+				t.Errorf("arguments should contain %q, got %q", tt.wantVal, calls[0].Arguments)
+			}
+		})
+	}
+}
+
 func TestExtractTextToolCalls_ValidJSON(t *testing.T) {
 	content := `<function=run_python>{"code": "print(1)"}</function>`
 	firstParam := func(name string) string {

@@ -391,29 +391,44 @@ func recoverFromFailedGeneration(body []byte, firstParam func(string) string) *R
 	return &Response{ToolCalls: calls}
 }
 
+// textToolCallRe matches <function=name>...</function> and variants.
 var textToolCallRe = regexp.MustCompile(`(?s)<?function\W(\w+)[>]?(.*?)</function>`)
 
+// pythonTagRe matches Llama's native <|python_tag|>toolname{...} format.
+var pythonTagRe = regexp.MustCompile(`<\|python_tag\|>(\w+)(\{.*?\})`)
+
 func extractTextToolCalls(content string, firstParam func(string) string) []ToolCall {
-	matches := textToolCallRe.FindAllStringSubmatch(content, -1)
-	if len(matches) == 0 {
+	type rawMatch struct {
+		name string
+		args string
+	}
+	var raws []rawMatch
+
+	for _, m := range textToolCallRe.FindAllStringSubmatch(content, -1) {
+		raws = append(raws, rawMatch{name: m[1], args: strings.TrimSpace(m[2])})
+	}
+	for _, m := range pythonTagRe.FindAllStringSubmatch(content, -1) {
+		raws = append(raws, rawMatch{name: m[1], args: strings.TrimSpace(m[2])})
+	}
+
+	if len(raws) == 0 {
 		return nil
 	}
-	calls := make([]ToolCall, 0, len(matches))
-	for i, m := range matches {
-		name := m[1]
-		raw := strings.TrimSpace(m[2])
-		raw = strings.ReplaceAll(raw, "'", "\"")
+
+	calls := make([]ToolCall, 0, len(raws))
+	for i, r := range raws {
+		raw := strings.ReplaceAll(r.args, "'", "\"")
 		if !json.Valid([]byte(raw)) {
 			key := "input"
 			if firstParam != nil {
-				key = firstParam(name)
+				key = firstParam(r.name)
 			}
 			b, _ := json.Marshal(map[string]string{key: raw})
 			raw = string(b)
 		}
 		calls = append(calls, ToolCall{
 			ID:        fmt.Sprintf("text-call-%d", i),
-			Name:      name,
+			Name:      r.name,
 			Arguments: raw,
 		})
 	}
