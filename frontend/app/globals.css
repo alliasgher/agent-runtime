@@ -4,40 +4,30 @@
 
 @layer base {
   body {
-    @apply bg-slate-950 text-slate-100;
+    background-color: #F6F8FB;
+    color: #0D1B2A;
   }
 
-  /* Custom scrollbar */
+  /* Scrollbar — light theme outside sidebar, dark inside sidebar */
   ::-webkit-scrollbar {
     width: 6px;
   }
   ::-webkit-scrollbar-track {
-    @apply bg-slate-900;
+    background: #F3F5F8;
   }
   ::-webkit-scrollbar-thumb {
-    @apply bg-slate-700 rounded-full;
+    background: #E3E8EF;
+    border-radius: 9999px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    @apply bg-slate-600;
+    background: #8896A6;
   }
 }
 
 @layer components {
-  .thinking-dots::after {
-    content: '';
-    animation: dots 1.5s steps(4, end) infinite;
-  }
-
-  @keyframes dots {
-    0%, 20% { content: ''; }
-    40% { content: '.'; }
-    60% { content: '..'; }
-    80%, 100% { content: '...'; }
-  }
-
   @keyframes pulse-border {
-    0%, 100% { border-color: rgba(59, 130, 246, 0.3); }
-    50% { border-color: rgba(59, 130, 246, 0.8); }
+    0%, 100% { border-color: rgba(0, 201, 167, 0.3); }
+    50%       { border-color: rgba(0, 201, 167, 0.8); }
   }
 
   .tool-card-active {

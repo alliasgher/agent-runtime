@@ -28,8 +28,8 @@ function CopyButton({ text, className = "" }: { text: string; className?: string
       title="Copy"
       className={`flex items-center gap-1 text-[10px] px-2 py-1 rounded-md transition-colors ${
         copied
-          ? "bg-emerald-500/20 text-emerald-400"
-          : "bg-slate-700/60 hover:bg-slate-600/60 text-slate-400 hover:text-slate-300"
+          ? "bg-prism-mint/20 text-prism-mint-dark"
+          : "bg-prism-border/60 hover:bg-prism-border text-prism-muted hover:text-prism-navy"
       } ${className}`}
     >
       {copied ? (
@@ -60,7 +60,7 @@ const markdownComponents: any = {
 
     if (isInline) {
       return (
-        <code className="text-xs bg-slate-900/60 rounded px-1 py-0.5 font-mono" {...props}>
+        <code className="text-xs bg-prism-surface border border-prism-border text-prism-navy rounded px-1 py-0.5 font-mono" {...props}>
           {children}
         </code>
       );
@@ -346,7 +346,7 @@ export default function Chat() {
   const toolPairs = groupToolEvents(currentEvents);
 
   return (
-    <div className="flex h-screen bg-slate-950">
+    <div className="flex h-screen bg-prism-surface">
       <Sidebar
         currentSessionId={sessionId}
         onSelectSession={handleSelectSession}
@@ -356,16 +356,16 @@ export default function Chat() {
 
       <div className="flex flex-col flex-1 min-w-0">
         {/* Header */}
-        <header className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-slate-800">
+        <header className="flex items-center justify-between px-4 sm:px-6 py-3.5 border-b border-prism-border bg-white">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center flex-shrink-0">
-              <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <div className="w-8 h-8 rounded-lg bg-prism-navy flex items-center justify-center flex-shrink-0">
+              <svg className="w-4.5 h-4.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
             </div>
             <div>
-              <h1 className="text-base sm:text-lg font-semibold text-white">Agent Runtime</h1>
-              <p className="text-xs text-slate-400 hidden sm:block">AI Agent Orchestration Engine</p>
+              <h1 className="text-base sm:text-lg font-semibold text-prism-deep font-sora tracking-tight">Agent Runtime</h1>
+              <p className="text-xs text-prism-muted hidden sm:block">AI Agent Orchestration Engine</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -373,7 +373,7 @@ export default function Chat() {
               <button
                 onClick={exportChat}
                 title="Export chat as Markdown"
-                className="hidden sm:flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 px-2.5 py-1.5 rounded-lg hover:bg-slate-800 transition-colors"
+                className="hidden sm:flex items-center gap-1.5 text-xs text-prism-muted hover:text-prism-navy px-2.5 py-1.5 rounded-lg hover:bg-prism-surface transition-colors border border-transparent hover:border-prism-border"
               >
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -382,8 +382,8 @@ export default function Chat() {
               </button>
             )}
             <div className="flex items-center gap-2">
-              <div className={`w-2 h-2 rounded-full transition-colors ${isConnected ? "bg-emerald-400" : "bg-red-400 animate-pulse"}`} />
-              <span className="text-xs text-slate-400 hidden sm:block">
+              <div className={`w-2 h-2 rounded-full transition-colors ${isConnected ? "bg-prism-mint" : "bg-prism-coral animate-pulse"}`} />
+              <span className="text-xs text-prism-muted hidden sm:block">
                 {isConnected ? "Connected" : "Reconnecting..."}
               </span>
             </div>
@@ -394,13 +394,13 @@ export default function Chat() {
         <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-6 space-y-6">
           {messages.length === 0 && !isProcessing && !streamingContent && (
             <div className="flex flex-col items-center justify-center h-full text-center px-4">
-              <div className="w-16 h-16 rounded-2xl bg-slate-800 flex items-center justify-center mb-4">
-                <svg className="w-8 h-8 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <div className="w-16 h-16 rounded-2xl bg-prism-navy flex items-center justify-center mb-4 shadow-lg">
+                <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
                 </svg>
               </div>
-              <h2 className="text-xl font-semibold text-slate-200 mb-2">Agent Runtime</h2>
-              <p className="text-slate-400 max-w-md mb-6 text-sm">
+              <h2 className="text-xl font-semibold text-prism-deep mb-2 font-sora">Agent Runtime</h2>
+              <p className="text-prism-secondary max-w-md mb-6 text-sm leading-relaxed">
                 An AI agent that can search the web, read pages, run Python code,
                 and look up Wikipedia — all orchestrated in real time.
               </p>
@@ -414,7 +414,7 @@ export default function Chat() {
                   <button
                     key={i}
                     onClick={() => handleSend(suggestion)}
-                    className="text-left text-sm px-4 py-3 rounded-xl bg-slate-800/50 border border-slate-700/50 text-slate-300 hover:bg-slate-700/50 hover:border-slate-600 transition-all"
+                    className="text-left text-sm px-4 py-3 rounded-xl bg-white border border-prism-border text-prism-secondary hover:border-prism-navy hover:text-prism-navy transition-all shadow-sm"
                   >
                     {suggestion}
                   </button>
@@ -427,9 +427,9 @@ export default function Chat() {
             <div key={msg.id}>
               {msg.role === "user" ? (
                 <div className="flex justify-end items-end gap-2">
-                  <span className="text-xs text-slate-600 mb-1">{formatTime(msg.timestamp)}</span>
-                  <div className="bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 max-w-[85%] sm:max-w-[75%]">
-                    <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                  <span className="text-xs text-prism-muted mb-1">{formatTime(msg.timestamp)}</span>
+                  <div className="bg-prism-navy text-white rounded-2xl rounded-tr-sm px-4 py-3 max-w-[85%] sm:max-w-[75%] shadow-sm">
+                    <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p>
                   </div>
                 </div>
               ) : (
@@ -442,26 +442,26 @@ export default function Chat() {
                     </div>
                   )}
                   <div className="flex justify-start items-end gap-2 group">
-                    <div className={`rounded-2xl rounded-tl-sm px-4 py-3 max-w-[85%] sm:max-w-[75%] border ${
+                    <div className={`rounded-2xl rounded-tl-sm px-4 py-3 max-w-[85%] sm:max-w-[75%] border shadow-sm ${
                       msg.isError
-                        ? "bg-red-900/20 border-red-700/50"
-                        : "bg-slate-800 border-slate-700/50"
+                        ? "bg-red-50 border-prism-coral/30"
+                        : "bg-white border-prism-border"
                     }`}>
                       {msg.isError ? (
                         <div className="flex items-center gap-2">
-                          <svg className="w-4 h-4 text-red-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <svg className="w-4 h-4 text-prism-coral flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                           </svg>
-                          <p className="text-sm text-red-300">{msg.content}</p>
+                          <p className="text-sm text-prism-coral">{msg.content}</p>
                         </div>
                       ) : (
-                        <div className="text-sm prose prose-invert prose-sm max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+                        <div className="text-sm prose prose-sm max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 prose-p:text-prism-deep prose-headings:text-prism-deep prose-headings:font-sora prose-a:text-prism-mint prose-strong:text-prism-deep">
                           <ReactMarkdown remarkPlugins={[remarkBreaks]} components={markdownComponents}>{msg.content}</ReactMarkdown>
                         </div>
                       )}
                     </div>
                     <div className="flex flex-col items-center gap-1 mb-1">
-                      <span className="text-xs text-slate-600">{formatTime(msg.timestamp)}</span>
+                      <span className="text-xs text-prism-muted">{formatTime(msg.timestamp)}</span>
                       {!msg.isError && (
                         <div className="opacity-0 group-hover:opacity-100 transition-opacity">
                           <CopyButton text={msg.content} />
@@ -488,10 +488,10 @@ export default function Chat() {
               {/* Streaming text */}
               {streamingContent && (
                 <div className="flex justify-start">
-                  <div className="bg-slate-800 rounded-2xl rounded-tl-sm px-4 py-3 border border-slate-700/50 max-w-[85%] sm:max-w-[75%]">
-                    <p className="text-sm text-slate-200 whitespace-pre-wrap">
+                  <div className="bg-white rounded-2xl rounded-tl-sm px-4 py-3 border border-prism-border max-w-[85%] sm:max-w-[75%] shadow-sm">
+                    <p className="text-sm text-prism-deep whitespace-pre-wrap leading-relaxed">
                       {streamingContent}
-                      <span className="inline-block w-0.5 h-[1em] bg-blue-400 animate-pulse align-middle ml-0.5" />
+                      <span className="inline-block w-0.5 h-[1em] bg-prism-mint animate-pulse align-middle ml-0.5" />
                     </p>
                   </div>
                 </div>
@@ -500,16 +500,16 @@ export default function Chat() {
               {/* Thinking indicator (shown when no stream and no tools yet) */}
               {!streamingContent && toolPairs.length === 0 && (
                 <div className="flex justify-start">
-                  <div className="bg-slate-800 rounded-2xl rounded-tl-sm px-4 py-3 border border-slate-700/50">
+                  <div className="bg-white rounded-2xl rounded-tl-sm px-4 py-3 border border-prism-border shadow-sm">
                     <div className="flex items-center gap-2">
                       <div className="flex gap-1">
-                        <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: "0ms" }} />
-                        <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: "150ms" }} />
-                        <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: "300ms" }} />
+                        <div className="w-1.5 h-1.5 rounded-full bg-prism-mint animate-bounce" style={{ animationDelay: "0ms" }} />
+                        <div className="w-1.5 h-1.5 rounded-full bg-prism-mint animate-bounce" style={{ animationDelay: "150ms" }} />
+                        <div className="w-1.5 h-1.5 rounded-full bg-prism-mint animate-bounce" style={{ animationDelay: "300ms" }} />
                       </div>
-                      <span className="text-sm text-slate-400">
+                      <span className="text-sm text-prism-muted">
                         Thinking
-                        {thinkingStep > 0 && <span className="text-slate-600 ml-1">· step {thinkingStep}</span>}
+                        {thinkingStep > 0 && <span className="text-prism-muted/60 ml-1">· step {thinkingStep}</span>}
                       </span>
                     </div>
                   </div>
@@ -522,7 +522,7 @@ export default function Chat() {
         </div>
 
         {/* Input */}
-        <div className="px-4 sm:px-6 py-4 border-t border-slate-800">
+        <div className="px-4 sm:px-6 py-4 border-t border-prism-border bg-white">
           <div className="flex gap-2 sm:gap-3 items-end">
             <textarea
               ref={inputRef}
@@ -536,13 +536,13 @@ export default function Chat() {
               placeholder={isConnected ? "Ask the agent anything..." : "Reconnecting..."}
               disabled={!isConnected}
               rows={1}
-              className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 resize-none disabled:opacity-50 transition-all"
+              className="flex-1 bg-prism-surface border border-prism-border rounded-xl px-4 py-3 text-sm text-prism-deep placeholder:text-prism-muted focus:outline-none focus:ring-2 focus:ring-prism-mint/40 focus:border-prism-mint resize-none disabled:opacity-50 transition-all"
             />
             {isProcessing ? (
               <button
                 onClick={handleCancel}
                 title="Cancel"
-                className="bg-red-600 hover:bg-red-500 text-white rounded-xl px-4 py-3 transition-colors flex-shrink-0"
+                className="bg-prism-coral hover:opacity-90 text-white rounded-xl px-4 py-3 transition-opacity flex-shrink-0"
               >
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -553,7 +553,7 @@ export default function Chat() {
                 onClick={() => handleSend()}
                 disabled={!input.trim() || !isConnected}
                 title="Send"
-                className="bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-xl px-4 py-3 transition-colors flex-shrink-0"
+                className="bg-prism-navy hover:bg-prism-navy-light disabled:bg-prism-border disabled:text-prism-muted text-white rounded-xl px-4 py-3 transition-colors flex-shrink-0"
               >
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19V5m0 0l-7 7m7-7l7 7" />
@@ -561,7 +561,7 @@ export default function Chat() {
               </button>
             )}
           </div>
-          <p className="text-xs text-slate-600 mt-2 text-center">
+          <p className="text-xs text-prism-muted mt-2 text-center">
             Powered by a custom agent runtime with real-time tool orchestration
           </p>
         </div>

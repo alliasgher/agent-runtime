@@ -4,13 +4,13 @@ import { useState } from "react";
 import { AgentEvent } from "@/lib/types";
 
 const TOOL_COLORS: Record<string, { bg: string; border: string; text: string }> = {
-  web_search: { bg: "bg-blue-500/10",    border: "border-blue-500/30",    text: "text-blue-400" },
-  read_url:   { bg: "bg-purple-500/10",  border: "border-purple-500/30",  text: "text-purple-400" },
-  run_python: { bg: "bg-emerald-500/10", border: "border-emerald-500/30", text: "text-emerald-400" },
-  wikipedia:  { bg: "bg-amber-500/10",   border: "border-amber-500/30",   text: "text-amber-400" },
+  web_search: { bg: "bg-blue-50",    border: "border-blue-200",    text: "text-blue-600" },
+  read_url:   { bg: "bg-purple-50",  border: "border-purple-200",  text: "text-purple-600" },
+  run_python: { bg: "bg-emerald-50", border: "border-emerald-200", text: "text-emerald-600" },
+  wikipedia:  { bg: "bg-amber-50",   border: "border-amber-200",   text: "text-amber-600" },
 };
 
-const DEFAULT_COLOR = { bg: "bg-slate-500/10", border: "border-slate-500/30", text: "text-slate-400" };
+const DEFAULT_COLOR = { bg: "bg-prism-surface", border: "border-prism-border", text: "text-prism-secondary" };
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
@@ -42,16 +42,16 @@ export default function ToolCard({
   const duration = result ? result.timestamp - call.timestamp : null;
 
   return (
-    <div className={`rounded-xl border overflow-hidden transition-all duration-200 ${
+    <div className={`rounded-xl border overflow-hidden transition-all duration-200 shadow-sm ${
       isActive
-        ? "border-blue-500/50 shadow-[0_0_0_1px_rgba(59,130,246,0.15)] tool-card-active"
-        : "border-slate-700/50"
-    } bg-slate-800/50`}>
+        ? "border-prism-mint/50 shadow-[0_0_0_1px_rgba(0,201,167,0.15)] tool-card-active"
+        : "border-prism-border"
+    } bg-white`}>
 
       {/* Header */}
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-slate-700/30 transition-colors text-left"
+        className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-prism-surface transition-colors text-left"
       >
         <div className={`w-7 h-7 rounded-lg ${color.bg} ${color.border} border flex items-center justify-center flex-shrink-0`}>
           <ToolIcon name={call.tool_name || ""} className={`w-3.5 h-3.5 ${color.text}`} />
@@ -59,27 +59,27 @@ export default function ToolCard({
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-slate-200">{call.tool_name}</span>
+            <span className="text-xs font-semibold text-prism-deep">{call.tool_name}</span>
             {isActive && !result ? (
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-300 animate-pulse font-medium">
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-prism-navy/10 text-prism-navy animate-pulse font-medium">
                 Running
               </span>
             ) : result ? (
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-medium">
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-prism-mint/15 text-prism-mint-dark font-medium">
                 Done
               </span>
             ) : null}
             {duration !== null && duration > 0 && (
-              <span className="text-[10px] text-slate-600 font-mono">
+              <span className="text-[10px] text-prism-muted font-mono">
                 {formatDuration(duration)}
               </span>
             )}
           </div>
-          <p className="text-[11px] text-slate-500 truncate mt-0.5 leading-tight">{inputPreview}</p>
+          <p className="text-[11px] text-prism-muted truncate mt-0.5 leading-tight">{inputPreview}</p>
         </div>
 
         <svg
-          className={`w-3.5 h-3.5 text-slate-500 flex-shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`}
+          className={`w-3.5 h-3.5 text-prism-muted flex-shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`}
           fill="none" viewBox="0 0 24 24" stroke="currentColor"
         >
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
@@ -87,18 +87,18 @@ export default function ToolCard({
       </button>
 
       {expanded && (
-        <div className="border-t border-slate-700/50 divide-y divide-slate-700/50">
+        <div className="border-t border-prism-border divide-y divide-prism-border">
           <div className="px-3 py-2.5">
-            <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Input</p>
-            <pre className="text-[11px] text-slate-300 bg-slate-900/60 rounded-lg p-2.5 overflow-x-auto whitespace-pre-wrap leading-relaxed">
+            <p className="text-[10px] font-semibold text-prism-muted uppercase tracking-wider mb-1.5">Input</p>
+            <pre className="text-[11px] text-prism-secondary bg-prism-surface rounded-lg p-2.5 overflow-x-auto whitespace-pre-wrap leading-relaxed border border-prism-border">
               {JSON.stringify(parsedInput, null, 2)}
             </pre>
           </div>
 
           {resultText && (
             <div className="px-3 py-2.5">
-              <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Result</p>
-              <pre className="text-[11px] text-slate-300 bg-slate-900/60 rounded-lg p-2.5 overflow-x-auto whitespace-pre-wrap max-h-56 overflow-y-auto leading-relaxed">
+              <p className="text-[10px] font-semibold text-prism-muted uppercase tracking-wider mb-1.5">Result</p>
+              <pre className="text-[11px] text-prism-secondary bg-prism-surface rounded-lg p-2.5 overflow-x-auto whitespace-pre-wrap max-h-56 overflow-y-auto leading-relaxed border border-prism-border">
                 {resultText}
               </pre>
             </div>
@@ -107,11 +107,11 @@ export default function ToolCard({
           {isActive && !result && (
             <div className="px-3 py-2.5 flex items-center gap-2">
               <div className="flex gap-1">
-                <div className="w-1 h-1 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: "0ms" }} />
-                <div className="w-1 h-1 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: "150ms" }} />
-                <div className="w-1 h-1 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: "300ms" }} />
+                <div className="w-1 h-1 rounded-full bg-prism-mint animate-bounce" style={{ animationDelay: "0ms" }} />
+                <div className="w-1 h-1 rounded-full bg-prism-mint animate-bounce" style={{ animationDelay: "150ms" }} />
+                <div className="w-1 h-1 rounded-full bg-prism-mint animate-bounce" style={{ animationDelay: "300ms" }} />
               </div>
-              <span className="text-[11px] text-slate-500">Waiting for result...</span>
+              <span className="text-[11px] text-prism-muted">Waiting for result...</span>
             </div>
           )}
         </div>
