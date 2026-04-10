@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"sort"
@@ -63,27 +64,39 @@ func (p *OpenAIProvider) ChatCompletion(ctx context.Context, messages []Message,
 		req.Header.Set("Authorization", "Bearer "+p.apiKey)
 	}
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		if resp.StatusCode == http.StatusBadRequest {
-			if recovered := recoverFromFailedGeneration(respBody, firstParam); recovered != nil {
-				return recovered, nil
-			}
+	var respBody []byte
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt*attempt) * 5 * time.Second) // 5s, 20s backoff
 		}
-		return nil, fmt.Errorf("API error (HTTP %d): %s", resp.StatusCode, string(respBody))
+		var doErr error
+		resp, doErr := p.client.Do(req)
+		if doErr != nil {
+			return nil, fmt.Errorf("request failed: %w", doErr)
+		}
+		respBody, _ = io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusTooManyRequests {
+			slog.Warn("rate limited, retrying", "attempt", attempt+1)
+			// Recreate the request body for the next attempt
+			req, _ = http.NewRequestWithContext(ctx, "POST", p.baseURL+"/chat/completions", bytes.NewReader(bodyJSON))
+			req.Header.Set("Content-Type", "application/json")
+			if p.apiKey != "" {
+				req.Header.Set("Authorization", "Bearer "+p.apiKey)
+			}
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			if resp.StatusCode == http.StatusBadRequest {
+				if recovered := recoverFromFailedGeneration(respBody, firstParam); recovered != nil {
+					return recovered, nil
+				}
+			}
+			return nil, fmt.Errorf("API error (HTTP %d): %s", resp.StatusCode, string(respBody))
+		}
+		return p.parseResponse(respBody, firstParam)
 	}
-
-	return p.parseResponse(respBody, firstParam)
+	return nil, fmt.Errorf("API error after retries: %s", string(respBody))
 }
 
 // StreamChatCompletion sends a streaming request. Text tokens are delivered to
@@ -116,9 +129,28 @@ func (p *OpenAIProvider) StreamChatCompletion(ctx context.Context, messages []Me
 		req.Header.Set("Authorization", "Bearer "+p.apiKey)
 	}
 
-	resp, err := p.streamClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
+	var resp *http.Response
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt*attempt) * 5 * time.Second)
+			req, _ = http.NewRequestWithContext(ctx, "POST", p.baseURL+"/chat/completions", bytes.NewReader(bodyJSON))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Accept", "text/event-stream")
+			if p.apiKey != "" {
+				req.Header.Set("Authorization", "Bearer "+p.apiKey)
+			}
+		}
+		var doErr error
+		resp, doErr = p.streamClient.Do(req)
+		if doErr != nil {
+			return nil, fmt.Errorf("request failed: %w", doErr)
+		}
+		if resp.StatusCode == http.StatusTooManyRequests {
+			resp.Body.Close()
+			slog.Warn("stream rate limited, retrying", "attempt", attempt+1)
+			continue
+		}
+		break
 	}
 	defer resp.Body.Close()
 
@@ -391,8 +423,9 @@ func recoverFromFailedGeneration(body []byte, firstParam func(string) string) *R
 	return &Response{ToolCalls: calls}
 }
 
-// textToolCallRe matches <function=name>...</function> and variants.
-var textToolCallRe = regexp.MustCompile(`(?s)<?function\W(\w+)[>]?(.*?)</function>`)
+// textToolCallRe matches <function=name>...</function> and variants including
+// <function(name)>, <function\name>, <function:name>, <function name>, <function=name>.
+var textToolCallRe = regexp.MustCompile(`(?s)<?function[\W(](\w+)[)>]?\s*(.*?)</function>`)
 
 // pythonTagRe matches Llama's native <|python_tag|>toolname{...} format.
 var pythonTagRe = regexp.MustCompile(`<\|python_tag\|>(\w+)(\{.*?\})`)

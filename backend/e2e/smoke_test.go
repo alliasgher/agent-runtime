@@ -151,7 +151,14 @@ func checkResponse(t *testing.T, question, content string, events []agentEvent) 
 
 	// 1. Must not be blank
 	if strings.TrimSpace(content) == "" {
-		t.Errorf("BLANK RESPONSE for: %q\n  events: %s", question, summariseEvents(events))
+		// Collect error details from events
+		var errDetail string
+		for _, ev := range events {
+			if ev.Type == "error" {
+				errDetail = ev.Content
+			}
+		}
+		t.Errorf("BLANK RESPONSE for: %q\n  events: %s\n  error: %s", question, summariseEvents(events), errDetail)
 		return
 	}
 
@@ -275,8 +282,8 @@ func TestSmoke(t *testing.T) {
 				categorySession[tc.category] = sid
 			}
 
-			// Small pause so we don't hammer Groq rate limits
-			time.Sleep(2 * time.Second)
+			// Pause between questions to stay under Groq's token-per-minute limit
+			time.Sleep(8 * time.Second)
 
 			content, events := ask(t, sid, tc.question, 90*time.Second)
 			checkResponse(t, tc.question, content, events)
