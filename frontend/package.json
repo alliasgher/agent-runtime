@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev --port 3000",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "test": "jest --no-coverage"
   },
   "dependencies": {
     "@types/react-syntax-highlighter": "^15.5.13",
@@ -17,12 +18,18 @@
     "remark-breaks": "^4.0.0"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/node": "^20.0.0",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
     "autoprefixer": "^10.4.0",
+    "jest": "^30.3.0",
+    "jest-environment-jsdom": "^30.3.0",
     "postcss": "^8.4.0",
     "tailwindcss": "^3.4.0",
+    "ts-jest": "^29.4.9",
     "typescript": "^5.4.0"
   }
 }
