@@ -131,19 +131,20 @@ export default function Chat() {
       sid,
       (event) => { if (mounted.current) handleEvent(event); },
       () => { if (mounted.current) setIsConnected(false); },
-      () => {
+      (isReconnect) => {
         if (!mounted.current) return;
         setIsConnected(true);
-        // The agent goroutine was killed when the connection dropped — clear any
-        // stuck processing state so the user isn't left staring at "Thinking..."
-        setIsProcessing(false);
-        setCurrentEvents([]);
-        setStreamingContent("");
-        setThinkingStep(0);
+        if (isReconnect) {
+          // The agent goroutine was killed when the connection dropped — clear
+          // stuck processing state so the UI doesn't show "Thinking..." forever.
+          setIsProcessing(false);
+          setCurrentEvents([]);
+          setStreamingContent("");
+          setThinkingStep(0);
+        }
       }
     );
     wsRef.current = ws;
-    if (mounted.current) setIsConnected(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

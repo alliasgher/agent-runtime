@@ -32,7 +32,7 @@ export function connectWebSocket(
   sessionId: string,
   onEvent: (event: AgentEvent) => void,
   onClose?: () => void,
-  onReconnect?: () => void
+  onOpen?: (isReconnect: boolean) => void
 ): {
   send: (content: string) => void;
   cancel: () => void;
@@ -41,14 +41,17 @@ export function connectWebSocket(
   let ws: WebSocket;
   let closed = false;
   let retryDelay = 1000;
+  let everOpened = false;
 
   function connect() {
     ws = new WebSocket(`${WS_BASE}/ws/${sessionId}`);
 
     ws.onopen = () => {
       retryDelay = 1000;
-      console.log("WebSocket connected");
-      if (onReconnect) onReconnect();
+      const isReconnect = everOpened;
+      everOpened = true;
+      console.log(isReconnect ? "WebSocket reconnected" : "WebSocket connected");
+      onOpen?.(isReconnect);
     };
 
     ws.onmessage = (e) => {
