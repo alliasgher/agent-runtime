@@ -104,6 +104,18 @@ func TestExtractTextToolCalls_MultipleFormats(t *testing.T) {
 	}
 }
 
+func TestExtractTextToolCalls_BackslashSeparator(t *testing.T) {
+	// Model sometimes emits <function\tool_name{...}></function>
+	content := `<function\web_search{"query": "SpaceX launches"}></function>`
+	calls := extractTextToolCalls(content, func(n string) string { return "query" })
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(calls))
+	}
+	if calls[0].Name != "web_search" {
+		t.Errorf("want name web_search, got %s", calls[0].Name)
+	}
+}
+
 func TestConvertMessages_NullContentForAssistantWithToolCalls(t *testing.T) {
 	p := NewOpenAIProvider("", "", "")
 	msgs := []Message{
