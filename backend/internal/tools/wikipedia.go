@@ -37,6 +37,7 @@ func executeWikipedia(ctx context.Context, args map[string]any) (string, error) 
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
+	req.Header.Set("User-Agent", "AgentRuntime/1.0 (https://agent-runtime-ai.vercel.app)")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -49,10 +50,14 @@ func executeWikipedia(ctx context.Context, args map[string]any) (string, error) 
 		return "", fmt.Errorf("failed to read response: %w", err)
 	}
 
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("Wikipedia search returned HTTP %d", resp.StatusCode)
+	}
+
 	// Parse opensearch results: [query, [titles], [descriptions], [urls]]
 	var results []json.RawMessage
 	if err := json.Unmarshal(body, &results); err != nil {
-		return "", fmt.Errorf("failed to parse results: %w", err)
+		return "", fmt.Errorf("Wikipedia search returned unexpected response (status %d): %s", resp.StatusCode, string(body[:min(len(body), 200)]))
 	}
 
 	if len(results) < 2 {
@@ -78,7 +83,7 @@ func getWikipediaSummary(ctx context.Context, title string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
-	req.Header.Set("User-Agent", "AgentRuntime/1.0")
+	req.Header.Set("User-Agent", "AgentRuntime/1.0 (https://agent-runtime-ai.vercel.app)")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

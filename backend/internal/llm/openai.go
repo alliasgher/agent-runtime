@@ -417,7 +417,8 @@ func extractTextToolCalls(content string, firstParam func(string) string) []Tool
 
 	calls := make([]ToolCall, 0, len(raws))
 	for i, r := range raws {
-		raw := strings.ReplaceAll(r.args, "'", "\"")
+		raw := strings.TrimRight(r.args, ">") // strip trailing > captured before </function>
+		raw = strings.ReplaceAll(raw, "'", "\"")
 		if !json.Valid([]byte(raw)) {
 			key := "input"
 			if firstParam != nil {
