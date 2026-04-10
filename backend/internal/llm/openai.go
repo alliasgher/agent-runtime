@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -8,23 +9,26 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
 
 type OpenAIProvider struct {
-	baseURL string
-	apiKey  string
-	model   string
-	client  *http.Client
+	baseURL      string
+	apiKey       string
+	model        string
+	client       *http.Client // 60 s — non-streaming requests
+	streamClient *http.Client // 5 min — streaming (body read takes longer)
 }
 
 func NewOpenAIProvider(baseURL, apiKey, model string) *OpenAIProvider {
 	return &OpenAIProvider{
-		baseURL: baseURL,
-		apiKey:  apiKey,
-		model:   model,
-		client:  &http.Client{Timeout: 60 * time.Second},
+		baseURL:      baseURL,
+		apiKey:       apiKey,
+		model:        model,
+		client:       &http.Client{Timeout: 60 * time.Second},
+		streamClient: &http.Client{Timeout: 5 * time.Minute},
 	}
 }
 
@@ -32,16 +36,14 @@ func (p *OpenAIProvider) Name() string {
 	return fmt.Sprintf("openai-compatible (%s)", p.model)
 }
 
+// ChatCompletion sends a non-streaming request and returns the full response.
 func (p *OpenAIProvider) ChatCompletion(ctx context.Context, messages []Message, tools []ToolDef) (*Response, error) {
-	// Build a lookup of tool name → first required parameter name, used to
-	// correctly wrap plain-text tool calls that contain non-JSON arguments.
 	firstParam := buildFirstParamLookup(tools)
 
 	reqBody := map[string]any{
 		"model":    p.model,
 		"messages": p.convertMessages(messages),
 	}
-
 	if len(tools) > 0 {
 		reqBody["tools"] = tools
 		reqBody["tool_choice"] = "auto"
@@ -56,7 +58,6 @@ func (p *OpenAIProvider) ChatCompletion(ctx context.Context, messages []Message,
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-
 	req.Header.Set("Content-Type", "application/json")
 	if p.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+p.apiKey)
@@ -74,8 +75,6 @@ func (p *OpenAIProvider) ChatCompletion(ctx context.Context, messages []Message,
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		// Groq returns 400 with a failed_generation field when the model emits
-		// malformed tool call syntax. Try to salvage the tool calls from it.
 		if resp.StatusCode == http.StatusBadRequest {
 			if recovered := recoverFromFailedGeneration(respBody, firstParam); recovered != nil {
 				return recovered, nil
@@ -85,6 +84,163 @@ func (p *OpenAIProvider) ChatCompletion(ctx context.Context, messages []Message,
 	}
 
 	return p.parseResponse(respBody, firstParam)
+}
+
+// StreamChatCompletion sends a streaming request. Text tokens are delivered to
+// onToken as they arrive; the full Response is returned when the stream ends.
+func (p *OpenAIProvider) StreamChatCompletion(ctx context.Context, messages []Message, tools []ToolDef, onToken func(string)) (*Response, error) {
+	firstParam := buildFirstParamLookup(tools)
+
+	reqBody := map[string]any{
+		"model":    p.model,
+		"messages": p.convertMessages(messages),
+		"stream":   true,
+	}
+	if len(tools) > 0 {
+		reqBody["tools"] = tools
+		reqBody["tool_choice"] = "auto"
+	}
+
+	bodyJSON, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/chat/completions", bytes.NewReader(bodyJSON))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	if p.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+p.apiKey)
+	}
+
+	resp, err := p.streamClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode == http.StatusBadRequest {
+			if recovered := recoverFromFailedGeneration(body, firstParam); recovered != nil {
+				return recovered, nil
+			}
+		}
+		return nil, fmt.Errorf("API error (HTTP %d): %s", resp.StatusCode, string(body))
+	}
+
+	// Accumulated state across SSE chunks
+	type tcAccum struct {
+		id        string
+		name      string
+		arguments strings.Builder
+	}
+	var (
+		content   strings.Builder
+		toolCalls = make(map[int]*tcAccum)
+	)
+
+	scanner := bufio.NewScanner(resp.Body)
+	// Increase scanner buffer for large tool-call argument chunks
+	scanner.Buffer(make([]byte, 64*1024), 512*1024)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			break
+		}
+
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content   *string `json:"content"`
+					ToolCalls []struct {
+						Index    int    `json:"index"`
+						ID       string `json:"id"`
+						Function struct {
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+						} `json:"function"`
+					} `json:"tool_calls"`
+				} `json:"delta"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil || len(chunk.Choices) == 0 {
+			continue
+		}
+
+		delta := chunk.Choices[0].Delta
+
+		// Text token
+		if delta.Content != nil && *delta.Content != "" {
+			tok := *delta.Content
+			content.WriteString(tok)
+			if onToken != nil {
+				onToken(tok)
+			}
+		}
+
+		// Tool call argument fragments
+		for _, tc := range delta.ToolCalls {
+			if _, ok := toolCalls[tc.Index]; !ok {
+				toolCalls[tc.Index] = &tcAccum{}
+			}
+			if tc.ID != "" {
+				toolCalls[tc.Index].id = tc.ID
+			}
+			if tc.Function.Name != "" {
+				toolCalls[tc.Index].name = tc.Function.Name
+			}
+			toolCalls[tc.Index].arguments.WriteString(tc.Function.Arguments)
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("stream read error: %w", err)
+	}
+
+	result := &Response{Content: content.String()}
+
+	// Collect tool calls in index order
+	indices := make([]int, 0, len(toolCalls))
+	for idx := range toolCalls {
+		indices = append(indices, idx)
+	}
+	sort.Ints(indices)
+
+	for _, idx := range indices {
+		tc := toolCalls[idx]
+		argsStr := tc.arguments.String()
+		// Apply same normalization as the non-streaming path
+		argsStr = strings.ReplaceAll(argsStr, "'", "\"")
+		if !json.Valid([]byte(argsStr)) {
+			key := firstParam(tc.name)
+			b, _ := json.Marshal(map[string]string{key: argsStr})
+			argsStr = string(b)
+		}
+		result.ToolCalls = append(result.ToolCalls, ToolCall{
+			ID:        tc.id,
+			Name:      tc.name,
+			Arguments: argsStr,
+		})
+	}
+
+	// Text fallback: models that narrate tool calls instead of using structured format
+	if len(result.ToolCalls) == 0 && result.Content != "" {
+		if calls := extractTextToolCalls(result.Content, firstParam); len(calls) > 0 {
+			result.ToolCalls = calls
+			result.Content = ""
+		}
+	}
+
+	return result, nil
 }
 
 // buildFirstParamLookup returns a function that maps a tool name to its first
@@ -102,7 +258,6 @@ func buildFirstParamLookup(tools []ToolDef) func(string) string {
 		if !ok {
 			continue
 		}
-		// Required is built as []string by registry.OpenAIDef()
 		required, _ := params["required"].([]string)
 		if len(required) > 0 {
 			lookup[name] = required[0]
@@ -120,9 +275,7 @@ func (p *OpenAIProvider) convertMessages(messages []Message) []map[string]any {
 	out := make([]map[string]any, 0, len(messages))
 
 	for _, msg := range messages {
-		m := map[string]any{
-			"role": string(msg.Role),
-		}
+		m := map[string]any{"role": string(msg.Role)}
 
 		if msg.Content != "" {
 			m["content"] = msg.Content
@@ -150,7 +303,6 @@ func (p *OpenAIProvider) convertMessages(messages []Message) []map[string]any {
 		if msg.ToolCallID != "" {
 			m["tool_call_id"] = msg.ToolCallID
 		}
-
 		if msg.Name != "" {
 			m["name"] = msg.Name
 		}
@@ -168,7 +320,6 @@ func (p *OpenAIProvider) parseResponse(body []byte, firstParam func(string) stri
 				Content   *string `json:"content"`
 				ToolCalls []struct {
 					ID       string `json:"id"`
-					Type     string `json:"type"`
 					Function struct {
 						Name      string `json:"name"`
 						Arguments string `json:"arguments"`
@@ -184,11 +335,9 @@ func (p *OpenAIProvider) parseResponse(body []byte, firstParam func(string) stri
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-
 	if raw.Error != nil {
 		return nil, fmt.Errorf("API error: %s", raw.Error.Message)
 	}
-
 	if len(raw.Choices) == 0 {
 		return nil, fmt.Errorf("no choices in response")
 	}
@@ -208,8 +357,6 @@ func (p *OpenAIProvider) parseResponse(body []byte, firstParam func(string) stri
 		})
 	}
 
-	// Fallback: some models emit tool calls as text instead of structured tool_calls.
-	// Detect and promote them so the agent loop can execute them.
 	if len(resp.ToolCalls) == 0 && resp.Content != "" {
 		if calls := extractTextToolCalls(resp.Content, firstParam); len(calls) > 0 {
 			resp.ToolCalls = calls
@@ -220,9 +367,6 @@ func (p *OpenAIProvider) parseResponse(body []byte, firstParam func(string) stri
 	return resp, nil
 }
 
-// recoverFromFailedGeneration handles Groq 400 errors where the model emits
-// malformed tool call syntax. It parses the failed_generation field and
-// extracts tool calls from it.
 func recoverFromFailedGeneration(body []byte, firstParam func(string) string) *Response {
 	var errResp struct {
 		Error struct {
@@ -243,12 +387,6 @@ func recoverFromFailedGeneration(body []byte, firstParam func(string) string) *R
 	return &Response{ToolCalls: calls}
 }
 
-// extractTextToolCalls detects tool calls written as plain text by the model.
-// Handles patterns like:
-//
-//	function=run_python>{"code": "..."};</function>
-//	<function=wikipedia{"query": "..."}></function>
-//	<function/web_search{"query": "..."}></function>
 var textToolCallRe = regexp.MustCompile(`(?s)<?function[=/](\w+)[>]?(.*?)</function>`)
 
 func extractTextToolCalls(content string, firstParam func(string) string) []ToolCall {
@@ -260,10 +398,7 @@ func extractTextToolCalls(content string, firstParam func(string) string) []Tool
 	for i, m := range matches {
 		name := m[1]
 		raw := strings.TrimSpace(m[2])
-		// Normalize single-quoted Python dicts to valid JSON
 		raw = strings.ReplaceAll(raw, "'", "\"")
-		// If not valid JSON, wrap the raw text using the tool's first required
-		// parameter as the key (e.g. "code" for run_python, "query" for web_search).
 		if !json.Valid([]byte(raw)) {
 			key := "input"
 			if firstParam != nil {

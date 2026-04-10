@@ -20,8 +20,8 @@ type Message struct {
 }
 
 type ToolCall struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
 	Arguments string `json:"arguments"`
 }
 
@@ -33,6 +33,10 @@ type Response struct {
 type ToolDef = map[string]any
 
 type Provider interface {
+	// ChatCompletion returns a complete response without streaming.
 	ChatCompletion(ctx context.Context, messages []Message, tools []ToolDef) (*Response, error)
+	// StreamChatCompletion streams text tokens via onToken as they arrive.
+	// It still returns the full Response when complete (for tool calls etc.).
+	StreamChatCompletion(ctx context.Context, messages []Message, tools []ToolDef, onToken func(string)) (*Response, error)
 	Name() string
 }

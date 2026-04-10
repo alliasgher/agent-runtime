@@ -1,5 +1,6 @@
 export type EventType =
   | "thinking"
+  | "token"
   | "tool_call"
   | "tool_result"
   | "response"
@@ -21,6 +22,7 @@ export interface Message {
   content: string;
   events?: AgentEvent[];
   timestamp: number;
+  isError?: boolean;
 }
 
 export interface ToolInfo {

@@ -12,6 +12,11 @@ const TOOL_COLORS: Record<string, { bg: string; border: string; text: string }> 
 
 const DEFAULT_COLOR = { bg: "bg-slate-500/10", border: "border-slate-500/30", text: "text-slate-400" };
 
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
 export default function ToolCard({
   call,
   result,
@@ -34,6 +39,7 @@ export default function ToolCard({
     .join(" · ");
 
   const resultText = result?.content || "";
+  const duration = result ? result.timestamp - call.timestamp : null;
 
   return (
     <div className={`rounded-xl border overflow-hidden transition-all duration-200 ${
@@ -42,17 +48,15 @@ export default function ToolCard({
         : "border-slate-700/50"
     } bg-slate-800/50`}>
 
-      {/* Header — always visible */}
+      {/* Header */}
       <button
         onClick={() => setExpanded(!expanded)}
         className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-slate-700/30 transition-colors text-left"
       >
-        {/* Icon */}
         <div className={`w-7 h-7 rounded-lg ${color.bg} ${color.border} border flex items-center justify-center flex-shrink-0`}>
           <ToolIcon name={call.tool_name || ""} className={`w-3.5 h-3.5 ${color.text}`} />
         </div>
 
-        {/* Name + preview */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span className="text-xs font-semibold text-slate-200">{call.tool_name}</span>
@@ -65,11 +69,15 @@ export default function ToolCard({
                 Done
               </span>
             ) : null}
+            {duration !== null && duration > 0 && (
+              <span className="text-[10px] text-slate-600 font-mono">
+                {formatDuration(duration)}
+              </span>
+            )}
           </div>
           <p className="text-[11px] text-slate-500 truncate mt-0.5 leading-tight">{inputPreview}</p>
         </div>
 
-        {/* Chevron */}
         <svg
           className={`w-3.5 h-3.5 text-slate-500 flex-shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`}
           fill="none" viewBox="0 0 24 24" stroke="currentColor"
@@ -78,7 +86,6 @@ export default function ToolCard({
         </svg>
       </button>
 
-      {/* Expanded detail */}
       {expanded && (
         <div className="border-t border-slate-700/50 divide-y divide-slate-700/50">
           <div className="px-3 py-2.5">

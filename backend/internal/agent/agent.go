@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	MaxSteps      = 15
+	MaxSteps     = 15
 	SystemPrompt = `You are a helpful AI assistant with access to tools.
 
 Rules:
@@ -27,6 +27,7 @@ type EventType string
 
 const (
 	EventThinking   EventType = "thinking"
+	EventToken      EventType = "token"      // streaming text token
 	EventToolCall   EventType = "tool_call"
 	EventToolResult EventType = "tool_result"
 	EventResponse   EventType = "response"
@@ -49,27 +50,16 @@ type Agent struct {
 }
 
 func New(provider llm.Provider, registry *tools.Registry) *Agent {
-	return &Agent{
-		provider: provider,
-		registry: registry,
-	}
+	return &Agent{provider: provider, registry: registry}
 }
 
 func (a *Agent) Run(ctx context.Context, session *Session, input string, events chan<- Event) {
 	defer close(events)
 
-	// Add user message
-	session.AddMessage(llm.Message{
-		Role:    llm.RoleUser,
-		Content: input,
-	})
+	session.AddMessage(llm.Message{Role: llm.RoleUser, Content: input})
 
-	// Build messages with system prompt
 	messages := make([]llm.Message, 0, len(session.Messages)+1)
-	messages = append(messages, llm.Message{
-		Role:    llm.RoleSystem,
-		Content: SystemPrompt,
-	})
+	messages = append(messages, llm.Message{Role: llm.RoleSystem, Content: SystemPrompt})
 	messages = append(messages, session.Messages...)
 
 	toolDefs := a.registry.OpenAIDefs()
@@ -89,18 +79,30 @@ func (a *Agent) Run(ctx context.Context, session *Session, input string, events 
 			Timestamp: time.Now().UnixMilli(),
 		}
 
-		resp, err := a.provider.ChatCompletion(ctx, messages, toolDefs)
+		// onToken streams individual text tokens to the client while the LLM
+		// is generating. If the step ends up calling tools the frontend will
+		// clear this buffer; if it ends with text it becomes the final response.
+		onToken := func(token string) {
+			select {
+			case events <- Event{
+				Type:      EventToken,
+				Content:   token,
+				Step:      step,
+				Timestamp: time.Now().UnixMilli(),
+			}:
+			case <-ctx.Done():
+			}
+		}
+
+		resp, err := a.provider.StreamChatCompletion(ctx, messages, toolDefs, onToken)
 		if err != nil {
 			events <- newEvent(EventError, step, fmt.Sprintf("LLM error: %v", err))
 			return
 		}
 
-		// If no tool calls, this is the final response
+		// Final text response — no tool calls
 		if len(resp.ToolCalls) == 0 {
-			session.AddMessage(llm.Message{
-				Role:    llm.RoleAssistant,
-				Content: resp.Content,
-			})
+			session.AddMessage(llm.Message{Role: llm.RoleAssistant, Content: resp.Content})
 			events <- Event{
 				Type:      EventResponse,
 				Content:   resp.Content,
@@ -110,7 +112,7 @@ func (a *Agent) Run(ctx context.Context, session *Session, input string, events 
 			return
 		}
 
-		// The assistant message with tool calls (may also have content)
+		// Assistant message that includes tool calls
 		assistantMsg := llm.Message{
 			Role:      llm.RoleAssistant,
 			Content:   resp.Content,
@@ -119,15 +121,6 @@ func (a *Agent) Run(ctx context.Context, session *Session, input string, events 
 		session.AddMessage(assistantMsg)
 		messages = append(messages, assistantMsg)
 
-		if resp.Content != "" {
-			events <- Event{
-				Type:      EventThinking,
-				Content:   resp.Content,
-				Step:      step,
-				Timestamp: time.Now().UnixMilli(),
-			}
-		}
-
 		// Execute tools in parallel
 		type toolResult struct {
 			callID string
@@ -135,6 +128,7 @@ func (a *Agent) Run(ctx context.Context, session *Session, input string, events 
 			input  string
 			output string
 			err    error
+			dur    time.Duration
 		}
 
 		results := make([]toolResult, len(resp.ToolCalls))
@@ -144,7 +138,6 @@ func (a *Agent) Run(ctx context.Context, session *Session, input string, events 
 			wg.Add(1)
 			go func(idx int, call llm.ToolCall) {
 				defer wg.Done()
-
 				events <- Event{
 					Type:      EventToolCall,
 					ToolName:  call.Name,
@@ -153,7 +146,7 @@ func (a *Agent) Run(ctx context.Context, session *Session, input string, events 
 					Step:      step,
 					Timestamp: time.Now().UnixMilli(),
 				}
-
+				start := time.Now()
 				output, err := a.registry.Execute(ctx, call.Name, call.Arguments)
 				results[idx] = toolResult{
 					callID: call.ID,
@@ -161,21 +154,19 @@ func (a *Agent) Run(ctx context.Context, session *Session, input string, events 
 					input:  call.Arguments,
 					output: output,
 					err:    err,
+					dur:    time.Since(start),
 				}
 			}(i, tc)
 		}
 
 		wg.Wait()
 
-		// Add tool results to messages
 		for _, res := range results {
 			output := res.output
 			if res.err != nil {
 				output = fmt.Sprintf("Error: %v", res.err)
 				slog.Error("tool execution failed", "tool", res.name, "error", res.err)
 			}
-
-			// Truncate very long results
 			if len(output) > 10000 {
 				output = output[:10000] + "\n\n[Output truncated...]"
 			}
