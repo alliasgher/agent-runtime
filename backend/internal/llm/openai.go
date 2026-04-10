@@ -387,7 +387,7 @@ func recoverFromFailedGeneration(body []byte, firstParam func(string) string) *R
 	return &Response{ToolCalls: calls}
 }
 
-var textToolCallRe = regexp.MustCompile(`(?s)<?function[=/\\](\w+)[>]?(.*?)</function>`)
+var textToolCallRe = regexp.MustCompile(`(?s)<?function\W(\w+)[>]?(.*?)</function>`)
 
 func extractTextToolCalls(content string, firstParam func(string) string) []ToolCall {
 	matches := textToolCallRe.FindAllStringSubmatch(content, -1)
