@@ -1,0 +1,14 @@
+# Binaries
+backend/bin/
+
+# Dependencies
+frontend/node_modules/
+frontend/.next/
+
+# Environment
+.env
+.env.*
+
+# OS
+.DS_Store
+backend/server
