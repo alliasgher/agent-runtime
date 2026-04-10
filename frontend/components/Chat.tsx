@@ -127,7 +127,8 @@ export default function Chat() {
 
   useEffect(() => { scrollToBottom(); }, [messages, currentEvents, streamingContent, scrollToBottom]);
   useEffect(() => { currentEventsRef.current = currentEvents; }, [currentEvents]);
-  useEffect(() => { streamingContentRef.current = streamingContent; }, [streamingContent]);
+  // streamingContentRef is kept in sync directly by each handler (not via useEffect)
+  // to avoid races where a stale render-cycle effect overwrites a ref that was just updated.
 
   const connectToSession = useCallback((sid: string, mounted: { current: boolean }) => {
     const ws = connectWebSocket(
@@ -140,6 +141,7 @@ export default function Chat() {
         if (isReconnect) {
           // The agent goroutine was killed when the connection dropped — clear
           // stuck processing state so the UI doesn't show "Thinking..." forever.
+          streamingContentRef.current = "";
           setIsProcessing(false);
           setCurrentEvents([]);
           setStreamingContent("");
@@ -209,8 +211,11 @@ export default function Chat() {
         break;
 
       case "response": {
-        // Use streamed content if available, otherwise fall back to event content
+        // Capture before clearing — ref is the authoritative source since it's
+        // updated synchronously in the token handler, unlike the state which
+        // flushes asynchronously.
         const content = streamingContentRef.current || event.content || "";
+        streamingContentRef.current = "";
         setMessages((prev) => [
           ...prev,
           {
