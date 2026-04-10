@@ -33,7 +33,10 @@ func (p *OpenAIProvider) Name() string {
 }
 
 func (p *OpenAIProvider) ChatCompletion(ctx context.Context, messages []Message, tools []ToolDef) (*Response, error) {
-	// Build request body
+	// Build a lookup of tool name → first required parameter name, used to
+	// correctly wrap plain-text tool calls that contain non-JSON arguments.
+	firstParam := buildFirstParamLookup(tools)
+
 	reqBody := map[string]any{
 		"model":    p.model,
 		"messages": p.convertMessages(messages),
@@ -74,14 +77,43 @@ func (p *OpenAIProvider) ChatCompletion(ctx context.Context, messages []Message,
 		// Groq returns 400 with a failed_generation field when the model emits
 		// malformed tool call syntax. Try to salvage the tool calls from it.
 		if resp.StatusCode == http.StatusBadRequest {
-			if recovered := recoverFromFailedGeneration(respBody); recovered != nil {
+			if recovered := recoverFromFailedGeneration(respBody, firstParam); recovered != nil {
 				return recovered, nil
 			}
 		}
 		return nil, fmt.Errorf("API error (HTTP %d): %s", resp.StatusCode, string(respBody))
 	}
 
-	return p.parseResponse(respBody)
+	return p.parseResponse(respBody, firstParam)
+}
+
+// buildFirstParamLookup returns a function that maps a tool name to its first
+// required parameter name. Used to wrap plain-text tool call arguments with the
+// correct key when the model doesn't emit valid JSON.
+func buildFirstParamLookup(tools []ToolDef) func(string) string {
+	lookup := make(map[string]string, len(tools))
+	for _, def := range tools {
+		fn, ok := def["function"].(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := fn["name"].(string)
+		params, ok := fn["parameters"].(map[string]any)
+		if !ok {
+			continue
+		}
+		// Required is built as []string by registry.OpenAIDef()
+		required, _ := params["required"].([]string)
+		if len(required) > 0 {
+			lookup[name] = required[0]
+		}
+	}
+	return func(toolName string) string {
+		if key, ok := lookup[toolName]; ok {
+			return key
+		}
+		return "input"
+	}
 }
 
 func (p *OpenAIProvider) convertMessages(messages []Message) []map[string]any {
@@ -94,6 +126,10 @@ func (p *OpenAIProvider) convertMessages(messages []Message) []map[string]any {
 
 		if msg.Content != "" {
 			m["content"] = msg.Content
+		} else if msg.Role == RoleAssistant {
+			// OpenAI spec: assistant messages must include content even when
+			// empty — use explicit null so the API doesn't reject the request.
+			m["content"] = nil
 		}
 
 		if len(msg.ToolCalls) > 0 {
@@ -125,7 +161,7 @@ func (p *OpenAIProvider) convertMessages(messages []Message) []map[string]any {
 	return out
 }
 
-func (p *OpenAIProvider) parseResponse(body []byte) (*Response, error) {
+func (p *OpenAIProvider) parseResponse(body []byte, firstParam func(string) string) (*Response, error) {
 	var raw struct {
 		Choices []struct {
 			Message struct {
@@ -175,7 +211,7 @@ func (p *OpenAIProvider) parseResponse(body []byte) (*Response, error) {
 	// Fallback: some models emit tool calls as text instead of structured tool_calls.
 	// Detect and promote them so the agent loop can execute them.
 	if len(resp.ToolCalls) == 0 && resp.Content != "" {
-		if calls := extractTextToolCalls(resp.Content); len(calls) > 0 {
+		if calls := extractTextToolCalls(resp.Content, firstParam); len(calls) > 0 {
 			resp.ToolCalls = calls
 			resp.Content = ""
 		}
@@ -187,7 +223,7 @@ func (p *OpenAIProvider) parseResponse(body []byte) (*Response, error) {
 // recoverFromFailedGeneration handles Groq 400 errors where the model emits
 // malformed tool call syntax. It parses the failed_generation field and
 // extracts tool calls from it.
-func recoverFromFailedGeneration(body []byte) *Response {
+func recoverFromFailedGeneration(body []byte, firstParam func(string) string) *Response {
 	var errResp struct {
 		Error struct {
 			FailedGeneration string `json:"failed_generation"`
@@ -200,7 +236,7 @@ func recoverFromFailedGeneration(body []byte) *Response {
 	if fg == "" {
 		return nil
 	}
-	calls := extractTextToolCalls(fg)
+	calls := extractTextToolCalls(fg, firstParam)
 	if len(calls) == 0 {
 		return nil
 	}
@@ -209,12 +245,13 @@ func recoverFromFailedGeneration(body []byte) *Response {
 
 // extractTextToolCalls detects tool calls written as plain text by the model.
 // Handles patterns like:
-//   function=run_python>{"code": "..."};</function>
-//   <function=wikipedia{"query": "..."}></function>
-//   <function/web_search{"query": "..."}></function>
+//
+//	function=run_python>{"code": "..."};</function>
+//	<function=wikipedia{"query": "..."}></function>
+//	<function/web_search{"query": "..."}></function>
 var textToolCallRe = regexp.MustCompile(`(?s)<?function[=/](\w+)[>]?(.*?)</function>`)
 
-func extractTextToolCalls(content string) []ToolCall {
+func extractTextToolCalls(content string, firstParam func(string) string) []ToolCall {
 	matches := textToolCallRe.FindAllStringSubmatch(content, -1)
 	if len(matches) == 0 {
 		return nil
@@ -225,9 +262,14 @@ func extractTextToolCalls(content string) []ToolCall {
 		raw := strings.TrimSpace(m[2])
 		// Normalize single-quoted Python dicts to valid JSON
 		raw = strings.ReplaceAll(raw, "'", "\"")
-		// Verify it's valid JSON; if not, wrap as {"code": ...}
+		// If not valid JSON, wrap the raw text using the tool's first required
+		// parameter as the key (e.g. "code" for run_python, "query" for web_search).
 		if !json.Valid([]byte(raw)) {
-			b, _ := json.Marshal(map[string]string{"code": raw})
+			key := "input"
+			if firstParam != nil {
+				key = firstParam(name)
+			}
+			b, _ := json.Marshal(map[string]string{key: raw})
 			raw = string(b)
 		}
 		calls = append(calls, ToolCall{

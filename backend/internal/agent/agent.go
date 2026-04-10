@@ -13,7 +13,13 @@ import (
 
 const (
 	MaxSteps      = 15
-	SystemPrompt  = `You are a helpful AI assistant with access to tools. When you need current information, calculations, or code execution, you MUST call the tool directly using the function calling mechanism — never write tool calls as text in your response. Do not narrate or describe what you are about to do; just call the tool. After getting tool results, synthesize the information into a clear, helpful response.`
+	SystemPrompt = `You are a helpful AI assistant with access to tools.
+
+Rules:
+- Use tools via the function calling mechanism ONLY — never write tool calls as text.
+- ALWAYS supply every required parameter when calling a tool (e.g. "query" for web_search and wikipedia, "code" for run_python, "expression" for calculate, "url" for read_url). Never call a tool with an empty or missing required parameter.
+- Do not narrate what you are about to do; call the tool immediately.
+- After receiving tool results, synthesize a clear, helpful response.`
 )
 
 // Event types streamed to the client

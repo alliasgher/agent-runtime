@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 )
 
@@ -14,9 +16,9 @@ type ParameterDef struct {
 }
 
 type Tool struct {
-	Name        string                                                        `json:"name"`
-	Description string                                                        `json:"description"`
-	Parameters  map[string]ParameterDef                                       `json:"parameters"`
+	Name        string                                                         `json:"name"`
+	Description string                                                         `json:"description"`
+	Parameters  map[string]ParameterDef                                        `json:"parameters"`
 	Execute     func(ctx context.Context, args map[string]any) (string, error) `json:"-"`
 }
 
@@ -33,6 +35,9 @@ func (t *Tool) OpenAIDef() map[string]any {
 			required = append(required, name)
 		}
 	}
+
+	// Sort required for stable ordering (helps buildFirstParamLookup pick a deterministic first param)
+	sort.Strings(required)
 
 	return map[string]any{
 		"type": "function",
@@ -98,6 +103,27 @@ func (r *Registry) Execute(ctx context.Context, name, argsJSON string) (string, 
 	var args map[string]any
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return "", fmt.Errorf("invalid tool arguments: %w", err)
+	}
+
+	// Validate required parameters before invoking the tool so the model gets
+	// a clear, actionable error rather than a tool-specific message.
+	var missing []string
+	for paramName, paramDef := range tool.Parameters {
+		if !paramDef.Required {
+			continue
+		}
+		val, exists := args[paramName]
+		if !exists || val == nil {
+			missing = append(missing, paramName)
+			continue
+		}
+		if s, ok := val.(string); ok && strings.TrimSpace(s) == "" {
+			missing = append(missing, paramName)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return "", fmt.Errorf("missing required parameter(s) for %s: %s", name, strings.Join(missing, ", "))
 	}
 
 	return tool.Execute(ctx, args)
