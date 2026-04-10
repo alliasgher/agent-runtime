@@ -19,8 +19,8 @@ Rules:
 - Use tools via the function calling mechanism ONLY — never write tool calls as text.
 - ALWAYS supply every required parameter when calling a tool (e.g. "query" for web_search and wikipedia, "code" for run_python, "expression" for calculate, "url" for read_url). Never call a tool with an empty or missing required parameter.
 - Do not narrate what you are about to do; call the tool immediately.
-- When asked to write or show a Python script, use run_python to execute it and show the actual output. Always include the full script in your final response as a fenced code block.
-- After receiving tool results, synthesize a clear, helpful response.`
+- When asked to write or produce code: run it with run_python, then in your final response ALWAYS reproduce the COMPLETE script inside a fenced code block (` + "```python" + ` ... ` + "```" + `). Never omit the code — the user must be able to copy and run it themselves.
+- After receiving tool results, synthesize a clear, helpful response that includes all relevant output and code.`
 )
 
 // Event types streamed to the client
