@@ -42,9 +42,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/tools", s.handleListTools)
 	mux.HandleFunc("GET /api/sessions", s.handleListSessions)
 	mux.HandleFunc("GET /api/sessions/{id}", s.handleGetSession)
-	mux.HandleFunc("POST /api/sessions", rateLimitMiddleware(10, time.Hour)(s.handleCreateSession))
+	mux.HandleFunc("POST /api/sessions", rateLimitMiddleware(100, time.Hour)(s.handleCreateSession))
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDeleteSession)
-	mux.HandleFunc("GET /ws/{sessionID}", rateLimitMiddleware(30, time.Hour)(s.handleWebSocket))
+	mux.HandleFunc("GET /ws/{sessionID}", rateLimitMiddleware(200, time.Hour)(s.handleWebSocket))
 
 	return corsMiddleware(mux)
 }
