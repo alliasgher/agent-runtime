@@ -102,6 +102,21 @@ func TestExtractTextToolCalls_PythonTagFormat(t *testing.T) {
 	}
 }
 
+func TestExtractTextToolCalls_SingleTagFormat(t *testing.T) {
+	// Groq failed_generation format: <function=name{"key":"value"}>
+	content := `<function=web_search{"query": "latest SpaceX launches"}>`
+	calls := extractTextToolCalls(content, func(n string) string { return "query" })
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(calls))
+	}
+	if calls[0].Name != "web_search" {
+		t.Errorf("want tool %q, got %q", "web_search", calls[0].Name)
+	}
+	if !strings.Contains(calls[0].Arguments, "SpaceX") {
+		t.Errorf("arguments should contain SpaceX, got %q", calls[0].Arguments)
+	}
+}
+
 func TestExtractTextToolCalls_ValidJSON(t *testing.T) {
 	content := `<function=run_python>{"code": "print(1)"}</function>`
 	firstParam := func(name string) string {

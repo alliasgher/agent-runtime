@@ -443,6 +443,9 @@ func retryAfterDuration(resp *http.Response) time.Duration {
 // <function(name)>, <function\name>, <function:name>, <function name>, <function=name>.
 var textToolCallRe = regexp.MustCompile(`(?s)<?function[\W(](\w+)[)>]?\s*(.*?)</function>`)
 
+// singleTagToolCallRe matches self-closing <function=name{...}> with no closing tag.
+var singleTagToolCallRe = regexp.MustCompile(`<function=(\w+)(\{[^>]*\})>`)
+
 // pythonTagRe matches Llama's native <|python_tag|>toolname{...} format.
 var pythonTagRe = regexp.MustCompile(`<\|python_tag\|>(\w+)(\{.*?\})`)
 
@@ -453,11 +456,22 @@ func extractTextToolCalls(content string, firstParam func(string) string) []Tool
 	}
 	var raws []rawMatch
 
+	seen := map[string]bool{}
+	addRaw := func(name, args string) {
+		key := name + "|" + strings.TrimRight(args, ">")
+		if !seen[key] {
+			seen[key] = true
+			raws = append(raws, rawMatch{name: name, args: args})
+		}
+	}
 	for _, m := range textToolCallRe.FindAllStringSubmatch(content, -1) {
-		raws = append(raws, rawMatch{name: m[1], args: strings.TrimSpace(m[2])})
+		addRaw(m[1], strings.TrimSpace(m[2]))
+	}
+	for _, m := range singleTagToolCallRe.FindAllStringSubmatch(content, -1) {
+		addRaw(m[1], strings.TrimSpace(m[2]))
 	}
 	for _, m := range pythonTagRe.FindAllStringSubmatch(content, -1) {
-		raws = append(raws, rawMatch{name: m[1], args: strings.TrimSpace(m[2])})
+		addRaw(m[1], strings.TrimSpace(m[2]))
 	}
 
 	if len(raws) == 0 {
