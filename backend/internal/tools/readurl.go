@@ -59,23 +59,56 @@ func executeReadURL(ctx context.Context, args map[string]any) (string, error) {
 }
 
 func extractText(html string) string {
-	// Remove script and style blocks
-	scriptRe := regexp.MustCompile(`(?si)<(script|style|noscript)[^>]*>.*?</\1>`)
-	html = scriptRe.ReplaceAllString(html, "")
+	var b strings.Builder
+	b.Grow(len(html) / 2)
 
-	// Remove HTML comments
-	commentRe := regexp.MustCompile(`(?s)<!--.*?-->`)
-	html = commentRe.ReplaceAllString(html, "")
+	inTag := false
+	inScript := false
+	i := 0
+	lower := strings.ToLower(html)
 
-	// Replace block elements with newlines
-	blockRe := regexp.MustCompile(`(?i)</(p|div|h[1-6]|li|tr|br|hr)[^>]*>`)
-	html = blockRe.ReplaceAllString(html, "\n")
+	for i < len(html) {
+		// Skip script/style/noscript blocks entirely
+		if !inTag && !inScript {
+			for _, tag := range []string{"<script", "<style", "<noscript"} {
+				if strings.HasPrefix(lower[i:], tag) {
+					// find closing tag
+					closeTag := "</" + tag[1:] + ">"
+					end := strings.Index(lower[i:], closeTag)
+					if end >= 0 {
+						i += end + len(closeTag)
+					} else {
+						i = len(html)
+					}
+					goto next
+				}
+			}
+		}
 
-	// Strip remaining tags
-	tagRe := regexp.MustCompile(`<[^>]*>`)
-	text := tagRe.ReplaceAllString(html, "")
+		if html[i] == '<' {
+			inTag = true
+			// Add newline for block-level closing tags
+			if i+2 < len(html) && html[i+1] == '/' {
+				tag := strings.ToLower(html[i:])
+				for _, bt := range []string{"</p", "</div", "</h1", "</h2", "</h3", "</h4", "</h5", "</h6", "</li", "</tr", "</br"} {
+					if strings.HasPrefix(tag, bt) {
+						b.WriteByte('\n')
+						break
+					}
+				}
+			}
+		} else if html[i] == '>' {
+			inTag = false
+		} else if !inTag {
+			b.WriteByte(html[i])
+		}
+		i++
+	next:
+	}
 
-	// Decode entities
+	text := b.String()
+
+	// Decode common entities
 	text = strings.ReplaceAll(text, "&amp;", "&")
 	text = strings.ReplaceAll(text, "&lt;", "<")
 	text = strings.ReplaceAll(text, "&gt;", ">")
