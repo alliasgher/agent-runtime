@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -63,8 +64,23 @@ func (s *Server) Handler() http.Handler {
 	return corsMiddleware(mux)
 }
 
+// buildCommit is the git commit this binary was built from. Render sets
+// RENDER_GIT_COMMIT on every deploy, so /api/health can report exactly which
+// commit is serving. Without it a deploy that silently never happened looks
+// identical to one that succeeded — which is precisely how the backend sat two
+// commits behind production while every dashboard read green.
+var buildCommit = func() string {
+	if c := os.Getenv("RENDER_GIT_COMMIT"); c != "" {
+		return c
+	}
+	return "dev"
+}()
+
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status": "ok",
+		"commit": buildCommit,
+	})
 }
 
 func (s *Server) handleListTools(w http.ResponseWriter, r *http.Request) {
