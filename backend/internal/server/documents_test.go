@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"mime/multipart"
@@ -233,6 +234,71 @@ func TestDocumentsAreScopedToSession(t *testing.T) {
 		if !strings.Contains(e.Content, "No documents have been uploaded") {
 			t.Errorf("expected the empty-corpus message, got:\n%s", e.Content)
 		}
+	}
+}
+
+// TestGetSessionSkipsToolCallPreamble reproduces a duplication seen in
+// production: a model that emits text alongside its tool call had that
+// preamble stored as an assistant message, so reloading the conversation
+// rendered the answer twice — once as the preamble, once as the real reply.
+// The live UI never showed it, because it discards streamed text when the
+// tool_call event arrives, so the bug only appeared after a reload.
+func TestGetSessionSkipsToolCallPreamble(t *testing.T) {
+	const answer = "The 12th Fibonacci number is 144."
+
+	provider := &mockLLM{responses: []*llm.Response{
+		{
+			// Content *and* tool calls in the same response — the case that duplicated.
+			Content:   answer,
+			ToolCalls: []llm.ToolCall{{ID: "c1", Name: "echo", Arguments: `{"msg": "144"}`}},
+		},
+		{Content: answer},
+	}}
+
+	echo := &tools.Tool{
+		Name:        "echo",
+		Description: "echoes input",
+		Parameters:  map[string]tools.ParameterDef{"msg": {Type: "string", Required: true}},
+		Execute: func(_ context.Context, args map[string]any) (string, error) {
+			return args["msg"].(string), nil
+		},
+	}
+
+	reg := tools.NewRegistry()
+	reg.Register(echo)
+	srv := httptest.NewServer(server.New(provider, reg, nil, docs.NewStore(nil)).Handler())
+	defer srv.Close()
+
+	sessionID := createSession(t, srv)
+	conn := connectWS(t, srv, sessionID)
+	sendMessage(t, conn, "What is the 12th Fibonacci number?")
+	readEvents(t, conn, 10*time.Second)
+	conn.Close()
+
+	resp, err := http.Get(srv.URL + "/api/sessions/" + sessionID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var out struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode session: %v", err)
+	}
+
+	var assistant int
+	for _, m := range out.Messages {
+		if m.Role == "assistant" {
+			assistant++
+		}
+	}
+	if assistant != 1 {
+		t.Errorf("expected exactly 1 assistant message on reload, got %d: %+v", assistant, out.Messages)
 	}
 }
 
