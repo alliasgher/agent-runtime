@@ -61,7 +61,7 @@ func newTestServer(t *testing.T, provider llm.Provider, extraTools ...*tools.Too
 	for _, tool := range extraTools {
 		reg.Register(tool)
 	}
-	srv := server.New(provider, reg, nil)
+	srv := server.New(provider, reg, nil, nil)
 	return httptest.NewServer(srv.Handler())
 }
 

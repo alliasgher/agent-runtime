@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/ali-asghar/agent-runtime/internal/docs"
 	"github.com/ali-asghar/agent-runtime/internal/llm"
 	"github.com/ali-asghar/agent-runtime/internal/server"
 	"github.com/ali-asghar/agent-runtime/internal/store"
@@ -39,13 +40,23 @@ func main() {
 
 	provider := llm.NewOpenAIProvider(baseURL, apiKey, model)
 
+	// db is typed *store.Store, so it has to be nil-checked before becoming an
+	// interface value — otherwise docs.Store would hold a non-nil interface
+	// wrapping a nil pointer and panic on the first write.
+	var persister docs.Persister
+	if db != nil {
+		persister = db
+	}
+	docStore := docs.NewStore(persister)
+
 	registry := tools.NewRegistry()
 	registry.Register(tools.NewWebSearchTool())
 	registry.Register(tools.NewReadURLTool())
 	registry.Register(tools.NewRunPythonTool())
 	registry.Register(tools.NewWikipediaTool())
+	registry.Register(tools.NewSearchDocumentsTool(docStore))
 
-	if err := server.Start(":"+port, provider, registry, db); err != nil {
+	if err := server.Start(":"+port, provider, registry, db, docStore); err != nil {
 		slog.Error("server failed", "error", err)
 		os.Exit(1)
 	}

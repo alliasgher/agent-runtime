@@ -25,6 +25,17 @@ export interface Message {
   isError?: boolean;
 }
 
+/** A file uploaded to a session and indexed for retrieval. */
+export interface DocumentInfo {
+  id: string;
+  session_id: string;
+  name: string;
+  size_bytes: number;
+  chars: number;
+  num_chunks: number;
+  created_at: string;
+}
+
 export interface ToolInfo {
   name: string;
   description: string;

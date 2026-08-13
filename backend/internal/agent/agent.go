@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/ali-asghar/agent-runtime/internal/docs"
 	"github.com/ali-asghar/agent-runtime/internal/llm"
 	"github.com/ali-asghar/agent-runtime/internal/tools"
 )
@@ -23,6 +25,29 @@ Rules:
 - When asked to write AND run code, or when the question requires computing a result: use run_python to actually execute it, then in your final response ALWAYS reproduce the COMPLETE script inside a fenced code block (` + "```python" + ` ... ` + "```" + `). Never omit the code — the user must be able to copy and run it themselves.
 - After receiving tool results, synthesize a clear, helpful response that includes all relevant output and code.`
 )
+
+// buildSystemPrompt appends the session's uploaded documents to the base
+// prompt. Without the listing the model has no way to know an attachment
+// exists, and answers from memory instead of calling search_documents.
+func buildSystemPrompt(attached []*docs.Document) string {
+	if len(attached) == 0 {
+		return SystemPrompt
+	}
+
+	var sb strings.Builder
+	sb.WriteString(SystemPrompt)
+	fmt.Fprintf(&sb, "\n\nThe user has uploaded %d document(s) to this conversation:\n", len(attached))
+	for _, doc := range attached {
+		fmt.Fprintf(&sb, "- %s (%d passages)\n", doc.Name, doc.NumChunks)
+	}
+	sb.WriteString(
+		"\nYou cannot see their contents directly — use the search_documents tool to read them. " +
+			"Any question about \"the document\", \"the file\", \"the attachment\", or about a topic these documents " +
+			"plausibly cover must be answered with search_documents rather than web_search or your own knowledge. " +
+			"Cite the document name in your answer, and say so plainly when the documents don't contain the answer.")
+
+	return sb.String()
+}
 
 // Event types streamed to the client
 type EventType string
@@ -49,19 +74,24 @@ type Event struct {
 type Agent struct {
 	provider llm.Provider
 	registry *tools.Registry
+	docs     *docs.Store // nil = document retrieval disabled
 }
 
-func New(provider llm.Provider, registry *tools.Registry) *Agent {
-	return &Agent{provider: provider, registry: registry}
+func New(provider llm.Provider, registry *tools.Registry, docStore *docs.Store) *Agent {
+	return &Agent{provider: provider, registry: registry, docs: docStore}
 }
 
 func (a *Agent) Run(ctx context.Context, session *Session, input string, events chan<- Event) {
 	defer close(events)
 
+	// Tools receive only a context, so the session has to travel on it — this
+	// is what scopes search_documents to this conversation's uploads.
+	ctx = docs.WithSessionID(ctx, session.ID)
+
 	session.AddMessage(llm.Message{Role: llm.RoleUser, Content: input})
 
 	messages := make([]llm.Message, 0, len(session.Messages)+1)
-	messages = append(messages, llm.Message{Role: llm.RoleSystem, Content: SystemPrompt})
+	messages = append(messages, llm.Message{Role: llm.RoleSystem, Content: buildSystemPrompt(a.docs.List(session.ID))})
 	messages = append(messages, session.Messages...)
 
 	toolDefs := a.registry.OpenAIDefs()
