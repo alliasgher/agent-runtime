@@ -6,7 +6,7 @@ import remarkBreaks from "remark-breaks";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { AgentEvent, Message } from "@/lib/types";
-import { getOrCreateSession, createSession, connectWebSocket, fetchSession } from "@/lib/websocket";
+import { getOrCreateSession, createSession, connectWebSocket, fetchSession, wakeBackend } from "@/lib/websocket";
 import ToolCard from "./ToolCard";
 import Sidebar from "./Sidebar";
 
@@ -104,10 +104,19 @@ const markdownComponents: any = {
   },
 };
 
+// How the backend is doing on first load. The free tier sleeps, so "waking" is
+// a normal state that needs explaining rather than an error.
+type BootPhase = "booting" | "waking" | "ready" | "failed";
+
+// Roughly how long a Render free-tier cold start takes, used to pace the bar.
+const COLD_START_ESTIMATE_S = 55;
+
 export default function Chat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isConnected, setIsConnected] = useState(false);
+  const [bootPhase, setBootPhase] = useState<BootPhase>("booting");
+  const [wakeSeconds, setWakeSeconds] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentEvents, setCurrentEvents] = useState<AgentEvent[]>([]);
   const [thinkingStep, setThinkingStep] = useState(0);
@@ -153,35 +162,69 @@ export default function Chat() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const boot = useCallback(async (mounted: { current: boolean }) => {
+    setBootPhase("booting");
+    setWakeSeconds(0);
+
+    // Only call it "waking" once it's clearly slower than a warm response,
+    // so a live server doesn't flash a misleading cold-start message.
+    const slowTimer = setTimeout(() => {
+      if (mounted.current) setBootPhase("waking");
+    }, 2500);
+    const ticker = setInterval(() => {
+      if (mounted.current) setWakeSeconds((s) => s + 1);
+    }, 1000);
+
+    try {
+      const awake = await wakeBackend();
+      if (!mounted.current) return;
+      if (!awake) {
+        setBootPhase("failed");
+        return;
+      }
+
+      const sid = await getOrCreateSession();
+      if (!mounted.current) return;
+      setSessionId(sid);
+
+      const existing = await fetchSession(sid);
+      if (existing?.messages?.length && mounted.current) {
+        setMessages(existing.messages.map((m, i) => ({
+          id: `history-${i}`,
+          role: m.role as "user" | "assistant",
+          content: m.content,
+          events: [],
+          timestamp: Date.now(),
+        })));
+      }
+      if (!mounted.current) return;
+      setBootPhase("ready");
+      connectToSession(sid, mounted);
+    } catch (err) {
+      console.error("Failed to connect:", err);
+      if (mounted.current) setBootPhase("failed");
+    } finally {
+      clearTimeout(slowTimer);
+      clearInterval(ticker);
+    }
+  }, [connectToSession]);
+
+  const mountedRef = useRef({ current: true });
+
   useEffect(() => {
     const mounted = { current: true };
-
-    async function connect() {
-      try {
-        const sid = await getOrCreateSession();
-        setSessionId(sid);
-        const existing = await fetchSession(sid);
-        if (existing?.messages?.length && mounted.current) {
-          setMessages(existing.messages.map((m, i) => ({
-            id: `history-${i}`,
-            role: m.role as "user" | "assistant",
-            content: m.content,
-            events: [],
-            timestamp: Date.now(),
-          })));
-        }
-        connectToSession(sid, mounted);
-      } catch (err) {
-        console.error("Failed to connect:", err);
-      }
-    }
-
-    connect();
+    mountedRef.current = mounted;
+    boot(mounted);
     return () => {
       mounted.current = false;
       wsRef.current?.close();
     };
-  }, [connectToSession]);
+  }, [boot]);
+
+  function handleRetry() {
+    wsRef.current?.close();
+    boot(mountedRef.current);
+  }
 
   function handleEvent(event: AgentEvent) {
     switch (event.type) {
@@ -397,18 +440,22 @@ export default function Chat() {
                 Export
               </button>
             )}
-            <div className="flex items-center gap-2">
-              <div className={`w-2 h-2 rounded-full transition-colors ${isConnected ? "bg-prism-mint" : "bg-prism-coral animate-pulse"}`} />
-              <span className="text-xs text-prism-muted hidden sm:block">
-                {isConnected ? "Connected" : "Reconnecting..."}
-              </span>
-            </div>
+            <ConnectionPill
+              phase={bootPhase}
+              isConnected={isConnected}
+              wakeSeconds={wakeSeconds}
+              onRetry={handleRetry}
+            />
           </div>
         </header>
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-6 space-y-6">
-          {messages.length === 0 && !isProcessing && !streamingContent && (
+          {bootPhase !== "ready" && messages.length === 0 && (
+            <ColdStartPanel phase={bootPhase} wakeSeconds={wakeSeconds} onRetry={handleRetry} />
+          )}
+
+          {bootPhase === "ready" && messages.length === 0 && !isProcessing && !streamingContent && (
             <div className="flex flex-col items-center justify-center h-full text-center px-4">
               <div className="w-16 h-16 rounded-2xl bg-prism-navy flex items-center justify-center mb-4 shadow-lg">
                 <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -549,7 +596,15 @@ export default function Chat() {
                 e.target.style.height = Math.min(e.target.scrollHeight, 150) + "px";
               }}
               onKeyDown={handleKeyDown}
-              placeholder={isConnected ? "Ask the agent anything..." : "Reconnecting..."}
+              placeholder={
+                isConnected
+                  ? "Ask the agent anything..."
+                  : bootPhase === "waking"
+                  ? "Waking the server — this takes 30-60s on the free tier..."
+                  : bootPhase === "failed"
+                  ? "Server unreachable — hit Retry above"
+                  : "Connecting..."
+              }
               disabled={!isConnected}
               rows={1}
               className="flex-1 bg-prism-surface border border-prism-border rounded-xl px-4 py-3 text-sm text-prism-deep placeholder:text-prism-muted focus:outline-none focus:ring-2 focus:ring-prism-mint/40 focus:border-prism-mint resize-none disabled:opacity-50 transition-all"
@@ -582,6 +637,151 @@ export default function Chat() {
           </p>
         </div>
       </div>
+    </div>
+  );
+}
+
+function Spinner({ className = "w-4 h-4" }: { className?: string }) {
+  return (
+    <svg className={`${className} animate-spin`} viewBox="0 0 24 24" fill="none">
+      <circle className="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+      <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/**
+ * Connection state, made deliberately prominent — and visible on mobile, which
+ * the old 8px dot was not. Doubles as the Retry control when the server is down.
+ */
+function ConnectionPill({
+  phase, isConnected, wakeSeconds, onRetry,
+}: {
+  phase: BootPhase;
+  isConnected: boolean;
+  wakeSeconds: number;
+  onRetry: () => void;
+}) {
+  if (phase === "failed") {
+    return (
+      <button
+        onClick={onRetry}
+        className="flex items-center gap-1.5 rounded-full bg-prism-coral px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-opacity hover:opacity-90"
+      >
+        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+        </svg>
+        Retry
+      </button>
+    );
+  }
+
+  if (phase === "waking" || phase === "booting") {
+    return (
+      <div className="flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700">
+        <Spinner className="w-3.5 h-3.5" />
+        <span>
+          {phase === "waking" ? "Waking server" : "Connecting"}
+          {phase === "waking" && wakeSeconds > 0 && (
+            <span className="ml-1 font-normal tabular-nums opacity-70">{wakeSeconds}s</span>
+          )}
+        </span>
+      </div>
+    );
+  }
+
+  if (!isConnected) {
+    return (
+      <div className="flex items-center gap-1.5 rounded-full border border-prism-coral/40 bg-red-50 px-3 py-1.5 text-xs font-semibold text-prism-coral">
+        <span className="h-2 w-2 animate-pulse rounded-full bg-prism-coral" />
+        Reconnecting
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-1.5 rounded-full border border-prism-mint/40 bg-prism-mint/10 px-3 py-1.5 text-xs font-semibold text-prism-mint-dark">
+      <span className="h-2 w-2 rounded-full bg-prism-mint" />
+      Connected
+    </div>
+  );
+}
+
+/**
+ * Replaces the empty state while the backend boots. Without this the app showed
+ * a disabled input reading "Reconnecting..." for up to a minute, which reads as
+ * broken rather than as a free-tier cold start.
+ */
+function ColdStartPanel({
+  phase, wakeSeconds, onRetry,
+}: {
+  phase: BootPhase;
+  wakeSeconds: number;
+  onRetry: () => void;
+}) {
+  const failed = phase === "failed";
+  const pct = Math.min(95, Math.round((wakeSeconds / COLD_START_ESTIMATE_S) * 100));
+
+  return (
+    <div className="flex h-full flex-col items-center justify-center px-4 text-center">
+      <div className="w-full max-w-md rounded-2xl border border-prism-border bg-white p-6 shadow-sm">
+        {failed ? (
+          <>
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-red-50">
+              <svg className="h-6 w-6 text-prism-coral" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                  d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            </div>
+            <h2 className="mb-1.5 font-sora text-lg font-semibold text-prism-deep">
+              Couldn&apos;t reach the server
+            </h2>
+            <p className="mb-5 text-sm leading-relaxed text-prism-secondary">
+              It didn&apos;t come back within two minutes. It may still be starting up — try again.
+            </p>
+            <button
+              onClick={onRetry}
+              className="inline-flex items-center gap-2 rounded-xl bg-prism-navy px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-prism-navy-light"
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              Try again
+            </button>
+          </>
+        ) : (
+          <>
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-amber-50">
+              <Spinner className="h-6 w-6 text-amber-600" />
+            </div>
+            <h2 className="mb-1.5 font-sora text-lg font-semibold text-prism-deep">
+              Waking the server
+            </h2>
+            <p className="mb-4 text-sm leading-relaxed text-prism-secondary">
+              This runs on a free instance that sleeps after 15 minutes of inactivity.
+              The first request boots it back up, which takes about{" "}
+              <span className="font-semibold text-prism-deep">30-60 seconds</span>. It stays fast
+              afterwards.
+            </p>
+
+            <div className="mb-2 h-1.5 w-full overflow-hidden rounded-full bg-prism-surface">
+              <div
+                className="h-full rounded-full bg-amber-400 transition-[width] duration-1000 ease-linear"
+                style={{ width: `${Math.max(6, pct)}%` }}
+              />
+            </div>
+            <p className="text-xs tabular-nums text-prism-muted">
+              {wakeSeconds}s elapsed{wakeSeconds > COLD_START_ESTIMATE_S && " — almost there"}
+            </p>
+          </>
+        )}
+      </div>
+
+      <p className="mt-4 max-w-sm text-xs leading-relaxed text-prism-muted">
+        Sleeping when idle is what keeps this deployment free — nothing is broken.
+      </p>
     </div>
   );
 }

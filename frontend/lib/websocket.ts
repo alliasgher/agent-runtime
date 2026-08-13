@@ -5,6 +5,38 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
 
 const SESSION_KEY = "agent_session_id";
 
+/**
+ * Render's free tier spins the container down after 15 minutes idle, so the
+ * first request after a quiet period blocks while it boots. Poll /api/health
+ * until it answers rather than firing a real request that appears to hang.
+ */
+export async function wakeBackend(opts: {
+  onProgress?: (elapsedMs: number) => void;
+  timeoutMs?: number;
+} = {}): Promise<boolean> {
+  const { onProgress, timeoutMs = 120_000 } = opts;
+  const started = Date.now();
+
+  while (Date.now() - started < timeoutMs) {
+    try {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 15_000);
+      const res = await fetch(`${API_BASE}/api/health`, {
+        signal: controller.signal,
+        cache: "no-store",
+      });
+      clearTimeout(t);
+      if (res.ok) return true;
+    } catch {
+      // Boot in progress (connection refused / 502 / aborted) — keep waiting.
+    }
+    onProgress?.(Date.now() - started);
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+
+  return false;
+}
+
 export async function getOrCreateSession(): Promise<string> {
   const stored = localStorage.getItem(SESSION_KEY);
   if (stored) {
