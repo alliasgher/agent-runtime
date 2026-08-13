@@ -142,9 +142,20 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	}{ID: session.ID, Messages: []messageOut{}}
 	for _, m := range session.Messages {
 		// Only expose user and assistant text messages to the frontend
-		if (m.Role == "user" || m.Role == "assistant") && m.Content != "" {
-			out.Messages = append(out.Messages, messageOut{Role: string(m.Role), Content: m.Content})
+		if m.Role != llm.RoleUser && m.Role != llm.RoleAssistant {
+			continue
 		}
+		if m.Content == "" {
+			continue
+		}
+		// An assistant message carrying tool calls holds the preamble the model
+		// emitted alongside them, which the live UI deliberately discards when
+		// the tool_call event arrives. Replaying it here rendered that preamble
+		// as a second bubble, duplicating the answer on every session reload.
+		if m.Role == llm.RoleAssistant && len(m.ToolCalls) > 0 {
+			continue
+		}
+		out.Messages = append(out.Messages, messageOut{Role: string(m.Role), Content: m.Content})
 	}
 	writeJSON(w, http.StatusOK, out)
 }
