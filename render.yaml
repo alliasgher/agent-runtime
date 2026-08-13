@@ -1,0 +1,23 @@
+services:
+  - name: agent-runtime
+    type: web
+    runtime: docker
+    plan: free
+    region: oregon
+    # Only the Go backend is built; the frontend is deployed separately on Vercel.
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    envVars:
+      - key: LLM_BASE_URL
+        value: https://api.groq.com/openai/v1
+      - key: LLM_MODEL
+        value: llama-3.3-70b-versatile
+      # Prompted on first Blueprint creation, then stored encrypted.
+      - key: LLM_API_KEY
+        sync: false
+      # Without this the agent keeps sessions in memory, which the free tier's
+      # 15-minute spin-down would wipe on every idle period.
+      - key: DATABASE_URL
+        sync: false
