@@ -52,3 +52,54 @@ jobs:
         run: npm run build
         env:
           NEXT_PUBLIC_API_URL: https://placeholder.example.com
+
+  # Render builds this image, not `go build`. Without this job a Dockerfile or
+  # dependency break passes CI green and only fails at deploy time.
+  image:
+    name: Backend image builds
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build production image
+        run: docker build -t agent-runtime-ci backend
+
+  # Render's own auto-deploy never fired for any commit after the service was
+  # created, leaving the backend two commits behind with every dashboard
+  # reporting green. Deploying from CI makes the trigger explicit, gates it on
+  # the tests above, and fails loudly when the new build doesn't come up.
+  deploy:
+    name: Deploy backend to Render
+    needs: [backend, frontend, image]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Trigger Render deploy
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "::error::RENDER_DEPLOY_HOOK_URL is not set — the backend will NOT deploy."
+            exit 1
+          fi
+          curl -fsS -X POST "$RENDER_DEPLOY_HOOK_URL" -o /dev/null
+          echo "Deploy triggered for $GITHUB_SHA"
+
+      - name: Wait for the commit to actually serve
+        env:
+          BACKEND_URL: https://agent-runtime-zspt.onrender.com
+        run: |
+          echo "Waiting for $BACKEND_URL to report $GITHUB_SHA"
+          for i in $(seq 1 60); do
+            live=$(curl -sf --max-time 120 "$BACKEND_URL/api/health" | jq -r '.commit // empty' || true)
+            if [ "$live" = "$GITHUB_SHA" ]; then
+              echo "Live: $live"
+              exit 0
+            fi
+            echo "  attempt $i/60 — serving '${live:-unreachable}'"
+            sleep 20
+          done
+          echo "::error::$BACKEND_URL never reported $GITHUB_SHA (~20min). Check the Render deploy log."
+          exit 1
