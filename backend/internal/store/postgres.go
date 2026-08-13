@@ -8,6 +8,7 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
+	"github.com/ali-asghar/agent-runtime/internal/docs"
 	"github.com/ali-asghar/agent-runtime/internal/llm"
 )
 
@@ -53,6 +54,17 @@ func (s *Store) migrate() error {
 			name        TEXT NOT NULL DEFAULT '',
 			created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);
+		-- Only the extracted text is stored, not the original upload: chunking
+		-- is deterministic, so the index is rebuilt on boot from this column.
+		CREATE TABLE IF NOT EXISTS documents (
+			id         TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+			name       TEXT NOT NULL,
+			size_bytes BIGINT NOT NULL DEFAULT 0,
+			content    TEXT NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);
+		CREATE INDEX IF NOT EXISTS documents_session_id_idx ON documents(session_id);
 	`)
 	return err
 }
@@ -138,4 +150,43 @@ func (s *Store) LoadMessages(ctx context.Context, sessionID string) ([]llm.Messa
 func (s *Store) DeleteSession(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE id = $1`, id)
 	return err
+}
+
+// SaveDocument, DeleteDocument and LoadDocuments implement docs.Persister.
+
+func (s *Store) SaveDocument(ctx context.Context, doc *docs.Document) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO documents (id, session_id, name, size_bytes, content, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 ON CONFLICT (id) DO UPDATE SET name = $3, size_bytes = $4, content = $5`,
+		doc.ID, doc.SessionID, doc.Name, doc.SizeBytes, doc.Text, doc.CreatedAt,
+	)
+	return err
+}
+
+func (s *Store) DeleteDocument(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM documents WHERE id = $1`, id)
+	return err
+}
+
+func (s *Store) LoadDocuments(ctx context.Context) ([]*docs.Document, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, session_id, name, size_bytes, content, created_at
+		 FROM documents ORDER BY created_at`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []*docs.Document
+	for rows.Next() {
+		var d docs.Document
+		if err := rows.Scan(&d.ID, &d.SessionID, &d.Name, &d.SizeBytes, &d.Text, &d.CreatedAt); err != nil {
+			return nil, err
+		}
+		d.Chars = len(d.Text)
+		out = append(out, &d)
+	}
+	return out, rows.Err()
 }

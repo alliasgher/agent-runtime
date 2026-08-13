@@ -66,7 +66,7 @@ func TestAgent_SimpleTextResponse(t *testing.T) {
 		},
 	}
 	registry := tools.NewRegistry()
-	a := New(provider, registry)
+	a := New(provider, registry, nil)
 
 	session := &Session{ID: "test-1"}
 	events := make(chan Event, 32)
@@ -104,7 +104,7 @@ func TestAgent_TokensStreamedBeforeResponse(t *testing.T) {
 		},
 	}
 	registry := tools.NewRegistry()
-	a := New(provider, registry)
+	a := New(provider, registry, nil)
 
 	session := &Session{ID: "test-2"}
 	events := make(chan Event, 64)
@@ -147,7 +147,7 @@ func TestAgent_ToolCallThenResponse(t *testing.T) {
 		},
 	})
 
-	a := New(provider, registry)
+	a := New(provider, registry, nil)
 	session := &Session{ID: "test-3"}
 	events := make(chan Event, 64)
 
@@ -177,7 +177,7 @@ func TestAgent_Cancellation(t *testing.T) {
 		},
 	}
 	registry := tools.NewRegistry()
-	a := New(provider, registry)
+	a := New(provider, registry, nil)
 
 	session := &Session{ID: "test-cancel"}
 	events := make(chan Event, 32)
@@ -206,7 +206,7 @@ func TestAgent_SessionMessageHistory(t *testing.T) {
 		},
 	}
 	registry := tools.NewRegistry()
-	a := New(provider, registry)
+	a := New(provider, registry, nil)
 
 	session := &Session{ID: "test-history"}
 	events := make(chan Event, 32)

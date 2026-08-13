@@ -5,10 +5,21 @@ import ReactMarkdown from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/cjs/styles/prism";
-import { AgentEvent, Message } from "@/lib/types";
-import { getOrCreateSession, createSession, connectWebSocket, fetchSession, wakeBackend } from "@/lib/websocket";
+import { AgentEvent, DocumentInfo, Message } from "@/lib/types";
+import {
+  getOrCreateSession,
+  createSession,
+  connectWebSocket,
+  fetchSession,
+  wakeBackend,
+  fetchDocuments,
+  uploadDocument,
+  deleteDocument,
+  ACCEPTED_UPLOAD_TYPES,
+} from "@/lib/websocket";
 import ToolCard from "./ToolCard";
 import Sidebar from "./Sidebar";
+import DocumentBar from "./DocumentBar";
 
 function formatTime(ts: number) {
   return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -123,10 +134,19 @@ export default function Chat() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sidebarRefresh, setSidebarRefresh] = useState(0);
   const [streamingContent, setStreamingContent] = useState("");
+  const [documents, setDocuments] = useState<DocumentInfo[]>([]);
+  const [uploading, setUploading] = useState<string[]>([]);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   const wsRef = useRef<{ send: (s: string) => void; cancel: () => void; close: () => void } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const sessionIdRef = useRef<string | null>(null);
+  // Nested dragenter/dragleave pairs fire as the pointer crosses child
+  // elements; counting them keeps the overlay from flickering.
+  const dragDepth = useRef(0);
   const currentEventsRef = useRef<AgentEvent[]>([]);
   const streamingContentRef = useRef("");
 
@@ -136,6 +156,9 @@ export default function Chat() {
 
   useEffect(() => { scrollToBottom(); }, [messages, currentEvents, streamingContent, scrollToBottom]);
   useEffect(() => { currentEventsRef.current = currentEvents; }, [currentEvents]);
+  // Upload handlers fire from drop events and file pickers that outlive the
+  // render they were created in, so they read the session from a ref.
+  useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
   // streamingContentRef is kept in sync directly by each handler (not via useEffect)
   // to avoid races where a stale render-cycle effect overwrites a ref that was just updated.
 
@@ -185,9 +208,10 @@ export default function Chat() {
 
       const sid = await getOrCreateSession();
       if (!mounted.current) return;
+      sessionIdRef.current = sid;
       setSessionId(sid);
 
-      const existing = await fetchSession(sid);
+      const [existing, docs] = await Promise.all([fetchSession(sid), fetchDocuments(sid)]);
       if (existing?.messages?.length && mounted.current) {
         setMessages(existing.messages.map((m, i) => ({
           id: `history-${i}`,
@@ -197,6 +221,7 @@ export default function Chat() {
           timestamp: Date.now(),
         })));
       }
+      if (mounted.current) setDocuments(docs);
       if (!mounted.current) return;
       setBootPhase("ready");
       connectToSession(sid, mounted);
@@ -224,6 +249,59 @@ export default function Chat() {
   function handleRetry() {
     wsRef.current?.close();
     boot(mountedRef.current);
+  }
+
+  /**
+   * Uploads files one at a time. Each is extracted and indexed server-side
+   * before it comes back, so a slow PDF doesn't hold up the others' chips.
+   */
+  async function handleFiles(files: FileList | File[]) {
+    const sid = sessionIdRef.current;
+    const list = Array.from(files);
+    if (!sid || list.length === 0) return;
+
+    setUploadError(null);
+    setUploading((prev) => [...prev, ...list.map((f) => f.name)]);
+
+    for (const file of list) {
+      try {
+        const doc = await uploadDocument(sid, file);
+        setDocuments((prev) => [...prev.filter((d) => d.name !== doc.name), doc]);
+      } catch (err) {
+        setUploadError(err instanceof Error ? err.message : `Could not upload ${file.name}`);
+      } finally {
+        setUploading((prev) => {
+          const idx = prev.indexOf(file.name);
+          if (idx === -1) return prev;
+          return [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+        });
+      }
+    }
+  }
+
+  async function handleRemoveDocument(doc: DocumentInfo) {
+    setDocuments((prev) => prev.filter((d) => d.id !== doc.id));
+    const sid = sessionIdRef.current;
+    if (sid) await deleteDocument(sid, doc.id);
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    dragDepth.current = 0;
+    setIsDragging(false);
+    if (e.dataTransfer.files?.length) handleFiles(e.dataTransfer.files);
+  }
+
+  function handleDragEnter(e: React.DragEvent) {
+    // Ignore drags that carry no files, like selected text.
+    if (!Array.from(e.dataTransfer.types).includes("Files")) return;
+    dragDepth.current += 1;
+    setIsDragging(true);
+  }
+
+  function handleDragLeave() {
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setIsDragging(false);
   }
 
   function handleEvent(event: AgentEvent) {
@@ -347,9 +425,13 @@ export default function Chat() {
     setThinkingStep(0);
     setIsProcessing(false);
     setIsConnected(false);
+    // Documents are scoped to a session, so a new chat starts with none.
+    setDocuments([]);
+    setUploadError(null);
 
     const mounted = { current: true };
     const sid = await createSession();
+    sessionIdRef.current = sid;
     setSessionId(sid);
     connectToSession(sid, mounted);
   }
@@ -363,10 +445,13 @@ export default function Chat() {
     setThinkingStep(0);
     setIsProcessing(false);
     setIsConnected(false);
+    setDocuments([]);
+    setUploadError(null);
+    sessionIdRef.current = sid;
     setSessionId(sid);
 
     localStorage.setItem("agent_session_id", sid);
-    const existing = await fetchSession(sid);
+    const [existing, docs] = await Promise.all([fetchSession(sid), fetchDocuments(sid)]);
     if (existing?.messages) {
       setMessages(existing.messages.map((m, i) => ({
         id: `history-${i}`,
@@ -376,6 +461,7 @@ export default function Chat() {
         timestamp: Date.now(),
       })));
     }
+    setDocuments(docs);
     const mounted = { current: true };
     connectToSession(sid, mounted);
   }
@@ -413,7 +499,28 @@ export default function Chat() {
         refreshTrigger={sidebarRefresh}
       />
 
-      <div className="flex flex-col flex-1 min-w-0">
+      <div
+        className="relative flex flex-col flex-1 min-w-0"
+        onDragEnter={handleDragEnter}
+        onDragOver={(e) => e.preventDefault()}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+        {/* Drop target. pointer-events-none so the drop still reaches the
+            container underneath. */}
+        {isDragging && (
+          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-prism-navy/10">
+            <div className="rounded-2xl border-2 border-dashed border-prism-navy bg-white px-7 py-6 text-center shadow-lg">
+              <svg className="mx-auto mb-2 h-8 w-8 text-prism-navy" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                  d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+              </svg>
+              <p className="font-sora text-sm font-semibold text-prism-deep">Drop files to attach</p>
+              <p className="mt-1 text-xs text-prism-muted">PDF, DOCX, TXT, MD, CSV and code files</p>
+            </div>
+          </div>
+        )}
+
         {/* Header */}
         <header className="flex items-center justify-between px-4 sm:px-6 py-3.5 border-b border-prism-border bg-white">
           <div className="flex items-center gap-3">
@@ -465,7 +572,8 @@ export default function Chat() {
               <h2 className="text-xl font-semibold text-prism-deep mb-2 font-sora">Agent Runtime</h2>
               <p className="text-prism-secondary max-w-md mb-6 text-sm leading-relaxed">
                 An AI agent that can search the web, read pages, run Python code,
-                and look up Wikipedia — all orchestrated in real time.
+                look up Wikipedia, and answer questions about documents you
+                attach — all orchestrated in real time.
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-lg w-full">
                 {[
@@ -483,6 +591,18 @@ export default function Chat() {
                   </button>
                 ))}
               </div>
+
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={!isConnected}
+                className="mt-5 flex items-center gap-2 text-xs text-prism-muted transition-colors hover:text-prism-navy disabled:opacity-50"
+              >
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                </svg>
+                Or attach a PDF, Word doc, or text file and ask about it
+              </button>
             </div>
           )}
 
@@ -586,7 +706,52 @@ export default function Chat() {
 
         {/* Input */}
         <div className="px-4 sm:px-6 py-4 border-t border-prism-border bg-white">
+          <DocumentBar documents={documents} uploading={uploading} onRemove={handleRemoveDocument} />
+
+          {uploadError && (
+            <div className="mb-2.5 flex items-start gap-2 rounded-lg border border-prism-coral/30 bg-red-50 px-3 py-2">
+              <svg className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-prism-coral" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <p className="flex-1 text-xs leading-relaxed text-prism-coral">{uploadError}</p>
+              <button
+                onClick={() => setUploadError(null)}
+                aria-label="Dismiss"
+                className="flex-shrink-0 text-prism-coral/70 transition-colors hover:text-prism-coral"
+              >
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          )}
+
           <div className="flex gap-2 sm:gap-3 items-end">
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept={ACCEPTED_UPLOAD_TYPES}
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files) handleFiles(e.target.files);
+                // Clearing the value lets the same file be picked twice in a row.
+                e.target.value = "";
+              }}
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={!isConnected}
+              title="Attach a document"
+              aria-label="Attach a document"
+              className="flex-shrink-0 rounded-xl border border-prism-border bg-prism-surface px-3 py-3 text-prism-muted transition-colors hover:border-prism-navy hover:text-prism-navy disabled:opacity-50 disabled:hover:border-prism-border disabled:hover:text-prism-muted"
+            >
+              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+              </svg>
+            </button>
             <textarea
               ref={inputRef}
               value={input}
@@ -598,7 +763,9 @@ export default function Chat() {
               onKeyDown={handleKeyDown}
               placeholder={
                 isConnected
-                  ? "Ask the agent anything..."
+                  ? documents.length > 0
+                    ? "Ask about your documents..."
+                    : "Ask the agent anything..."
                   : bootPhase === "waking"
                   ? "Waking the server — this takes 30-60s on the free tier..."
                   : bootPhase === "failed"

@@ -4,13 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"sort"
 	"sync"
 	"time"
 
 	"github.com/ali-asghar/agent-runtime/internal/agent"
+	"github.com/ali-asghar/agent-runtime/internal/docs"
 	"github.com/ali-asghar/agent-runtime/internal/llm"
 	"github.com/ali-asghar/agent-runtime/internal/store"
 	"github.com/ali-asghar/agent-runtime/internal/tools"
@@ -21,14 +24,22 @@ type Server struct {
 	agent    *agent.Agent
 	sessions *agent.SessionStore
 	registry *tools.Registry
+	docs     *docs.Store
 	upgrader websocket.Upgrader
 }
 
-func New(provider llm.Provider, registry *tools.Registry, db *store.Store) *Server {
+// New wires the server. docStore may be nil, in which case an in-memory one is
+// created — callers that also register the search_documents tool must pass the
+// same store both places so uploads and retrieval see the same documents.
+func New(provider llm.Provider, registry *tools.Registry, db *store.Store, docStore *docs.Store) *Server {
+	if docStore == nil {
+		docStore = docs.NewStore(nil)
+	}
 	return &Server{
-		agent:    agent.New(provider, registry),
+		agent:    agent.New(provider, registry, docStore),
 		sessions: agent.NewSessionStore(db),
 		registry: registry,
+		docs:     docStore,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
@@ -44,6 +55,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{id}", s.handleGetSession)
 	mux.HandleFunc("POST /api/sessions", rateLimitMiddleware(100, time.Hour)(s.handleCreateSession))
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDeleteSession)
+	mux.HandleFunc("GET /api/sessions/{id}/documents", s.handleListDocuments)
+	mux.HandleFunc("POST /api/sessions/{id}/documents", rateLimitMiddleware(60, time.Hour)(s.handleUploadDocument))
+	mux.HandleFunc("DELETE /api/sessions/{id}/documents/{docID}", s.handleDeleteDocument)
 	mux.HandleFunc("GET /ws/{sessionID}", rateLimitMiddleware(200, time.Hour)(s.handleWebSocket))
 
 	return corsMiddleware(mux)
@@ -127,6 +141,81 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	s.sessions.Delete(id)
+	// Postgres clears its own rows through ON DELETE CASCADE; this drops the
+	// in-memory copy and its index.
+	s.docs.DeleteSession(id)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+func (s *Server) handleListDocuments(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.PathValue("id")
+	if _, ok := s.sessions.Get(sessionID); !ok {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+	out := s.docs.List(sessionID)
+	if out == nil {
+		out = []*docs.Document{}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleUploadDocument(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.PathValue("id")
+	if _, ok := s.sessions.Get(sessionID); !ok {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+
+	// Bound the request before parsing so an oversized upload can't exhaust
+	// memory on the free tier. The slack above the file limit covers multipart
+	// framing overhead.
+	r.Body = http.MaxBytesReader(w, r.Body, docs.MaxFileSize+(1<<20))
+	if err := r.ParseMultipartForm(8 << 20); err != nil {
+		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{
+			"error": fmt.Sprintf("upload too large — the limit is %dMB per file", docs.MaxFileSize>>20),
+		})
+		return
+	}
+	defer r.MultipartForm.RemoveAll()
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no file found in the request"})
+		return
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "could not read the uploaded file"})
+		return
+	}
+
+	// filepath.Base strips any directory component the browser sent along.
+	name := filepath.Base(header.Filename)
+
+	doc, err := s.docs.Add(r.Context(), sessionID, name, data)
+	if err != nil {
+		// These errors are written for the user — bad format, empty file,
+		// scanned PDF — so pass them through rather than flattening them.
+		slog.Info("document upload rejected", "session_id", sessionID, "name", name, "error", err)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	slog.Info("document uploaded", "session_id", sessionID, "name", doc.Name, "chars", doc.Chars, "chunks", doc.NumChunks)
+	writeJSON(w, http.StatusCreated, doc)
+}
+
+func (s *Server) handleDeleteDocument(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.PathValue("id")
+	docID := r.PathValue("docID")
+
+	if !s.docs.Delete(r.Context(), sessionID, docID) {
+		http.Error(w, "document not found", http.StatusNotFound)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
@@ -276,8 +365,8 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func Start(addr string, provider llm.Provider, registry *tools.Registry, db *store.Store) error {
-	srv := New(provider, registry, db)
+func Start(addr string, provider llm.Provider, registry *tools.Registry, db *store.Store, docStore *docs.Store) error {
+	srv := New(provider, registry, db, docStore)
 	handler := srv.Handler()
 
 	slog.Info("agent runtime starting", "addr", addr, "provider", provider.Name(), "tools", len(registry.List()))

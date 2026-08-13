@@ -1,9 +1,17 @@
-import { AgentEvent } from "./types";
+import { AgentEvent, DocumentInfo } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 const WS_BASE = API_BASE.replace(/^http/, "ws");
 
 const SESSION_KEY = "agent_session_id";
+
+/** Mirrors docs.MaxFileSize on the backend, so oversized files fail instantly. */
+export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+
+/** Populates the file picker's filter. The backend is the real gatekeeper. */
+export const ACCEPTED_UPLOAD_TYPES =
+  ".pdf,.docx,.txt,.md,.markdown,.csv,.tsv,.json,.yaml,.yml,.toml,.log,.rst,.tex," +
+  ".go,.py,.js,.jsx,.ts,.tsx,.java,.c,.h,.cpp,.hpp,.cs,.rb,.rs,.php,.swift,.kt,.sql,.html,.css,.sh";
 
 /**
  * Render's free tier spins the container down after 15 minutes idle, so the
@@ -152,4 +160,40 @@ export async function deleteSession(sessionId: string): Promise<void> {
 export async function fetchTools() {
   const res = await fetch(`${API_BASE}/api/tools`);
   return res.json();
+}
+
+export async function fetchDocuments(sessionId: string): Promise<DocumentInfo[]> {
+  const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/documents`);
+  if (!res.ok) return [];
+  return res.json();
+}
+
+/**
+ * Uploads one file. The backend's rejection messages are written for the user
+ * (wrong format, scanned PDF, too large), so they're surfaced verbatim.
+ */
+export async function uploadDocument(sessionId: string, file: File): Promise<DocumentInfo> {
+  if (file.size > MAX_UPLOAD_BYTES) {
+    throw new Error(`${file.name} is larger than ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB`);
+  }
+
+  const form = new FormData();
+  form.append("file", file);
+
+  const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/documents`, {
+    method: "POST",
+    body: form,
+  });
+
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error(data?.error || `Upload failed (${res.status})`);
+  }
+  return data as DocumentInfo;
+}
+
+export async function deleteDocument(sessionId: string, docId: string): Promise<void> {
+  await fetch(`${API_BASE}/api/sessions/${sessionId}/documents/${docId}`, {
+    method: "DELETE",
+  });
 }
